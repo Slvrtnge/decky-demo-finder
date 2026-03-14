@@ -14,7 +14,7 @@ import {
   fetchNoCors,
 } from "@decky/api";
 import { useState, useEffect, useCallback, useRef, Fragment, FC, useMemo } from "react";
-import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown } from "react-icons/fa";
+import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown, FaChevronDown, FaChevronUp } from "react-icons/fa";
 
 // ---- Backend callables ----
 const getWishlist = callable<[steam_id: string], WishlistItem[] | string>("get_wishlist");
@@ -383,6 +383,7 @@ function Content() {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [sortBy, setSortBy] = useState<SortMode>("alpha");
+  const [optionsCollapsed, setOptionsCollapsed] = useState(false);
 
   const checkApiKey = useCallback(async () => {
     try {
@@ -627,52 +628,65 @@ function Content() {
     <Fragment>
       <PanelSection title="Wishlist Demo Finder">
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={loadWishlist} disabled={loading || scanning}>
+          <ButtonItem layout="below" onClick={() => setOptionsCollapsed(!optionsCollapsed)}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-              <FaSyncAlt size={14} />
-              {loading ? "Loading..." : "Refresh Wishlist"}
+              {optionsCollapsed ? <FaChevronDown size={12} /> : <FaChevronUp size={12} />}
+              {optionsCollapsed ? "Show Options" : "Hide Options"}
             </div>
           </ButtonItem>
         </PanelSectionRow>
 
-        {wishlist.length > 0 && (
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={scanForDemos} disabled={scanning || loading}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-                <FaSearch size={14} />
-                {scanning ? "Scanning..." : `Scan ${wishlist.length} Games for Demos`}
-              </div>
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
+        {!optionsCollapsed && (
+          <Fragment>
+            <PanelSectionRow>
+              <ButtonItem layout="below" onClick={loadWishlist} disabled={loading || scanning}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+                  <FaSyncAlt size={14} />
+                  {loading ? "Loading..." : "Refresh Wishlist"}
+                </div>
+              </ButtonItem>
+            </PanelSectionRow>
 
-        {hasScanned && demosFoundCount > 0 && (
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}>
-              {filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})`}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
+            {wishlist.length > 0 && (
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={scanForDemos} disabled={scanning || loading}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+                    <FaSearch size={14} />
+                    {scanning ? "Scanning..." : `Scan ${wishlist.length} Games for Demos`}
+                  </div>
+                </ButtonItem>
+              </PanelSectionRow>
+            )}
 
-        {wishlist.length > 0 && (
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={cycleSortMode}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-                <FaSortAlphaDown size={14} />
-                Sort: {sortLabel[sortBy]}
-              </div>
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
+            {hasScanned && demosFoundCount > 0 && (
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}>
+                  {filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})`}
+                </ButtonItem>
+              </PanelSectionRow>
+            )}
 
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => setShowSetup(!showSetup)}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-              <FaKey size={12} />
-              {showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")}
-            </div>
-          </ButtonItem>
-        </PanelSectionRow>
+            {wishlist.length > 0 && (
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={cycleSortMode}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+                    <FaSortAlphaDown size={14} />
+                    Sort: {sortLabel[sortBy]}
+                  </div>
+                </ButtonItem>
+              </PanelSectionRow>
+            )}
+
+            <PanelSectionRow>
+              <ButtonItem layout="below" onClick={() => setShowSetup(!showSetup)}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+                  <FaKey size={12} />
+                  {showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")}
+                </div>
+              </ButtonItem>
+            </PanelSectionRow>
+          </Fragment>
+        )}
       </PanelSection>
 
       {error && (
