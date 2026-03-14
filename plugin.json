@@ -2,7 +2,7 @@
   "name": "Demo Finder",
   "author": "Slvrtnge",
   "flags": [],
-  "api_version": 1,
+  "api_version": 2,
   "publish": {
     "tags": ["wishlist", "demo", "utility"],
     "description": "Check if your wishlisted games have demos available and quickly navigate to them.",
