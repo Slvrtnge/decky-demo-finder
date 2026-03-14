@@ -45,7 +45,7 @@ interface WishlistItemWithDemo extends WishlistItem {
 
 type SortMode = "alpha" | "date_added" | "release_date";
 
-const BATCH_SIZE = 200;
+const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
 const MAX_WISHLIST_PAGES = 20;

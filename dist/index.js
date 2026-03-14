@@ -106,7 +106,7 @@ const checkDemosBatch = callable("check_demos_batch");
 const setApiKey = callable("set_api_key");
 const getApiKey = callable("get_api_key");
 const resolveNamesBatch = callable("resolve_names_batch");
-const BATCH_SIZE = 200;
+const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
 const MAX_WISHLIST_PAGES = 20;

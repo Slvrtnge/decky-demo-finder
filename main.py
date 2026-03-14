@@ -126,16 +126,12 @@ class Plugin:
     _app_name_cache: dict = {}
     _app_name_cache_time: float = 0
     _APP_NAME_CACHE_TTL = 3600  # 1 hour
-    _MAX_CONCURRENT_REQUESTS = 15
+    _MAX_CONCURRENT_REQUESTS = 5
     _APP_LIST_FETCH_TIMEOUT = 25  # seconds — GetAppList response is ~4 MB
     _MIN_APP_LIST_SIZE = 1000  # sanity check: reject suspiciously small responses
     # IStoreService/GetAppList/v1 pagination controls
     _V1_MAX_RESULTS = 50000   # items per page (Steam's documented max)
     _V1_MAX_PAGES = 200       # safety cap (~10 M apps at 50 k/page)
-    # Demo scan result cache: { appid (int): result dict }
-    _demo_cache: dict = {}
-    _DEMO_CACHE_TTL = 3600  # 1 hour
-    _demo_cache_time: float = 0
 
     # ---- App-name resolution ----
 
@@ -801,7 +797,6 @@ class Plugin:
         """
         Like check_demo but reuses an existing session and respects a
         concurrency semaphore for rate-limit-friendly parallelism.
-        Retries on transient errors (429/5xx) with exponential backoff.
         """
         result = {
             "has_demo": False,
@@ -812,47 +807,35 @@ class Plugin:
             "name": None,
         }
         async with semaphore:
-            url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
-            for attempt in range(4):
-                try:
-                    async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
-                        if resp.status == 429 or resp.status >= 500:
-                            wait = 1.0 * (2 ** attempt)
-                            decky.logger.warning(
-                                f"appdetails returned {resp.status} for {appid}, "
-                                f"retrying in {wait:.0f}s (attempt {attempt + 1}/4)"
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        if resp.status != 200:
-                            return result
-                        data = await resp.json(content_type=None)
-                        app_data = data.get(str(appid), {})
-                        if not app_data.get("success", False):
-                            return result
-                        details = app_data.get("data", {})
-
-                        # Extract the game name from appdetails
-                        name = details.get("name")
-                        if name:
-                            result["name"] = name
-
-                        rd = details.get("release_date", {})
-                        if rd and rd.get("date"):
-                            result["release_date"] = rd["date"]
-
-                        demos = details.get("demos", [])
-                        if demos and len(demos) > 0:
-                            demo_appid = demos[0].get("appid")
-                            if demo_appid:
-                                result["has_demo"] = True
-                                result["demo_appid"] = int(demo_appid)
-                                result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
+            try:
+                url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+                async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                    if resp.status != 200:
                         return result
-                except Exception as e:
-                    decky.logger.warning(f"Concurrent demo check failed for {appid}: {e}")
-                    if attempt < 3:
-                        await asyncio.sleep(1.0 * (2 ** attempt))
+                    data = await resp.json(content_type=None)
+                    app_data = data.get(str(appid), {})
+                    if not app_data.get("success", False):
+                        return result
+                    details = app_data.get("data", {})
+
+                    # Extract the game name from appdetails
+                    name = details.get("name")
+                    if name:
+                        result["name"] = name
+
+                    rd = details.get("release_date", {})
+                    if rd and rd.get("date"):
+                        result["release_date"] = rd["date"]
+
+                    demos = details.get("demos", [])
+                    if demos and len(demos) > 0:
+                        demo_appid = demos[0].get("appid")
+                        if demo_appid:
+                            result["has_demo"] = True
+                            result["demo_appid"] = int(demo_appid)
+                            result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
+            except Exception as e:
+                decky.logger.warning(f"Concurrent demo check failed for {appid}: {e}")
         return result
 
     async def check_demos_batch(self, appids: list) -> dict:
@@ -860,47 +843,23 @@ class Plugin:
         Check multiple appids for demos concurrently.
         Uses a semaphore to limit parallel requests and stay within
         Steam's rate limits while being significantly faster than
-        sequential processing.  Leverages an in-memory cache to skip
-        apps that were already checked recently.
+        sequential processing.
         """
-        # Invalidate stale demo cache
-        now = time.time()
-        if Plugin._demo_cache and (now - Plugin._demo_cache_time) >= Plugin._DEMO_CACHE_TTL:
-            Plugin._demo_cache = {}
-            Plugin._demo_cache_time = 0
+        semaphore = asyncio.Semaphore(Plugin._MAX_CONCURRENT_REQUESTS)
+
+        async with aiohttp.ClientSession() as session:
+            async def _check(aid):
+                return str(aid), await self._check_demo_shared_session(session, int(aid), semaphore)
+
+            tasks = [_check(appid) for appid in appids]
+            pairs = await asyncio.gather(*tasks, return_exceptions=True)
 
         results = {}
-        uncached = []
-        for appid in appids:
-            aid = int(appid)
-            cached = Plugin._demo_cache.get(aid)
-            if cached is not None:
-                results[str(aid)] = cached
-            else:
-                uncached.append(aid)
-
-        if uncached:
-            decky.logger.info(
-                f"Demo batch: {len(results)} cached, {len(uncached)} to fetch"
-            )
-            semaphore = asyncio.Semaphore(Plugin._MAX_CONCURRENT_REQUESTS)
-
-            async with aiohttp.ClientSession() as session:
-                async def _check(aid):
-                    return str(aid), await self._check_demo_shared_session(session, int(aid), semaphore)
-
-                tasks = [_check(appid) for appid in uncached]
-                pairs = await asyncio.gather(*tasks, return_exceptions=True)
-
-            if not Plugin._demo_cache_time:
-                Plugin._demo_cache_time = now
-
-            for pair in pairs:
-                if isinstance(pair, Exception):
-                    continue
-                appid_str, demo_info = pair
-                results[appid_str] = demo_info
-                Plugin._demo_cache[int(appid_str)] = demo_info
+        for pair in pairs:
+            if isinstance(pair, Exception):
+                continue
+            appid_str, demo_info = pair
+            results[appid_str] = demo_info
 
         # Fill in any missing appids with default result
         for appid in appids:
