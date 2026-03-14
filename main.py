@@ -191,28 +191,53 @@ class Plugin:
             return
 
         decky.logger.info(f"Resolving names for {len(missing)} items via appdetails")
-        semaphore = asyncio.Semaphore(self._MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(3)
 
         async def _fetch_name(item):
             appid = item["appid"]
+            url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
             async with semaphore:
-                try:
-                    url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
-                    async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
-                        if resp.status != 200:
+                for attempt in range(3):
+                    try:
+                        async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                            if resp.status == 429 or resp.status >= 500:
+                                wait = 1.0 * (2 ** attempt)
+                                decky.logger.warning(
+                                    f"appdetails returned {resp.status} for {appid}, "
+                                    f"retrying in {wait:.0f}s (attempt {attempt + 1}/3)"
+                                )
+                                await asyncio.sleep(wait)
+                                continue
+                            if resp.status != 200:
+                                decky.logger.warning(
+                                    f"appdetails returned {resp.status} for {appid}"
+                                )
+                                await asyncio.sleep(0.3)
+                                return
+                            data = await resp.json(content_type=None)
+                            app_data = data.get(str(appid), {})
+                            if not app_data.get("success", False):
+                                await asyncio.sleep(0.3)
+                                return
+                            details = app_data.get("data", {})
+                            name = details.get("name")
+                            if name:
+                                item["name"] = name
+                            await asyncio.sleep(0.3)
                             return
-                        data = await resp.json(content_type=None)
-                        app_data = data.get(str(appid), {})
-                        if not app_data.get("success", False):
-                            return
-                        details = app_data.get("data", {})
-                        name = details.get("name")
-                        if name:
-                            item["name"] = name
-                except Exception as e:
-                    decky.logger.warning(f"Name resolution failed for appid {appid}: {e}")
+                    except Exception as e:
+                        decky.logger.warning(f"Name resolution failed for appid {appid}: {e}")
+                        # fall through to next attempt
 
-        await asyncio.gather(*[_fetch_name(item) for item in missing], return_exceptions=True)
+        # Process in small batches with a delay between batches to avoid
+        # overwhelming Steam's rate limits.
+        batch_size = 10
+        for i in range(0, len(missing), batch_size):
+            batch = missing[i:i + batch_size]
+            await asyncio.gather(*[_fetch_name(item) for item in batch], return_exceptions=True)
+            if i + batch_size < len(missing):
+                await asyncio.sleep(1.0)
+
         decky.logger.info("appdetails name resolution complete")
 
     # ---- Settings management ----
@@ -387,7 +412,7 @@ class Plugin:
                             name = "Unknown"
                             if isinstance(info, dict):
                                 name = info.get("name", "Unknown")
-                            all_items.append({"appid": appid, "name": name})
+                            all_items.append({"appid": appid, "name": name, "date_added": 0})
                     else:
                         break
 
@@ -635,32 +660,59 @@ class Plugin:
         frontend as a post-load name-resolution step for any remaining
         placeholder names.
         """
-        semaphore = asyncio.Semaphore(self._MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(3)
 
         async with aiohttp.ClientSession() as session:
             async def _fetch_name(appid):
+                url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
                 async with semaphore:
-                    try:
-                        url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
-                        async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
-                            if resp.status != 200:
-                                return str(appid), None
-                            data = await resp.json(content_type=None)
-                            app_data = data.get(str(appid), {})
-                            if not app_data.get("success", False):
-                                return str(appid), None
-                            details = app_data.get("data", {})
-                            return str(appid), details.get("name")
-                    except Exception as e:
-                        decky.logger.warning(f"Name fetch failed for appid {appid}: {e}")
-                        return str(appid), None
+                    for attempt in range(3):
+                        try:
+                            async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                                if resp.status == 429 or resp.status >= 500:
+                                    wait = 1.0 * (2 ** attempt)
+                                    decky.logger.warning(
+                                        f"resolve_names_batch: status {resp.status} for {appid}, "
+                                        f"retrying in {wait:.0f}s (attempt {attempt + 1}/3)"
+                                    )
+                                    await asyncio.sleep(wait)
+                                    continue
+                                if resp.status != 200:
+                                    decky.logger.warning(
+                                        f"resolve_names_batch: status {resp.status} for {appid}"
+                                    )
+                                    await asyncio.sleep(0.3)
+                                    return str(appid), None
+                                data = await resp.json(content_type=None)
+                                app_data = data.get(str(appid), {})
+                                if not app_data.get("success", False):
+                                    await asyncio.sleep(0.3)
+                                    return str(appid), None
+                                details = app_data.get("data", {})
+                                await asyncio.sleep(0.3)
+                                return str(appid), details.get("name")
+                        except Exception as e:
+                            decky.logger.warning(f"Name fetch failed for appid {appid}: {e}")
+                            # fall through to next attempt
+                    return str(appid), None
 
-            tasks = [_fetch_name(appid) for appid in appids]
-            pairs = await asyncio.gather(*tasks, return_exceptions=True)
+            # Process in small batches to avoid overwhelming Steam's rate limits.
+            batch_size = 10
+            pairs = []
+            for i in range(0, len(appids), batch_size):
+                batch = appids[i:i + batch_size]
+                batch_results = await asyncio.gather(
+                    *[_fetch_name(appid) for appid in batch], return_exceptions=True
+                )
+                pairs.extend(batch_results)
+                if i + batch_size < len(appids):
+                    await asyncio.sleep(1.0)
 
         result = {}
         for pair in pairs:
             if isinstance(pair, Exception):
+                continue
+            if pair is None:
                 continue
             appid_str, name = pair
             if name:

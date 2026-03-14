@@ -299,6 +299,7 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
 function Content() {
   const [wishlist, setWishlist] = useState<WishlistItemWithDemo[]>(cachedWishlist);
   const [loading, setLoading] = useState(false);
+  const [resolvingNames, setResolvingNames] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -327,6 +328,7 @@ function Content() {
 
   const loadWishlist = useCallback(async () => {
     setLoading(true);
+    setResolvingNames(false);
     setError(null);
     setHasScanned(false);
     try {
@@ -346,37 +348,24 @@ function Content() {
           setError("No Steam API key configured. Please set up your API key below to load your wishlist.");
           setShowSetup(true);
           setWishlist([]);
-          setLoading(false);
-          return;
-        }
-        if (result === "NO_STEAM_ID") {
+        } else if (result === "NO_STEAM_ID") {
           setError("Could not detect your Steam ID. Make sure you are logged in.");
-          setLoading(false);
-          return;
-        }
-        if (result === "FETCH_FAILED") {
+        } else if (result === "FETCH_FAILED") {
           setError("Failed to load wishlist. Check that your API key is valid and your wishlist is set to Public.");
           setShowSetup(true);
           setWishlist([]);
-          setLoading(false);
-          return;
         }
+        setLoading(false);
+        return;
       }
 
-      const items = Array.isArray(result) ? result : [];
+      let items: WishlistItem[] = Array.isArray(result) ? result : [];
 
       // Frontend fallback via fetchNoCors
       if (items.length === 0) {
         console.log("[Demo Finder] Backend returned empty, trying frontend fallback...");
         const apiKey = await getApiKey();
-        const fallbackItems = await fetchWishlistFrontend(steamId, apiKey);
-        if (fallbackItems.length > 0) {
-          const resolvedFallback = await resolveItemNames(fallbackItems);
-          setWishlist(resolvedFallback.map((item) => ({ ...item })));
-          setPage(0);
-          setLoading(false);
-          return;
-        }
+        items = await fetchWishlistFrontend(steamId, apiKey);
       }
 
       if (items.length === 0) {
@@ -388,15 +377,28 @@ function Content() {
           setError("Wishlist is empty or could not be loaded. Ensure your wishlist is set to Public and your API key is valid.");
         }
         setWishlist([]);
-      } else {
+        setLoading(false);
+        return;
+      }
+
+      // Show the list immediately (even with placeholder names) so the user
+      // sees their games right away, then resolve names in the background.
+      setWishlist(items.map((item) => ({ ...item })));
+      setPage(0);
+      setLoading(false);
+
+      setResolvingNames(true);
+      try {
         const resolvedItems = await resolveItemNames(items);
         setWishlist(resolvedItems.map((item) => ({ ...item })));
-        setPage(0);
+      } finally {
+        setResolvingNames(false);
       }
     } catch (e) {
       setError(`Failed to load wishlist: ${e}`);
+      setLoading(false);
+      setResolvingNames(false);
     }
-    setLoading(false);
   }, [checkApiKey]);
 
   const scanForDemos = useCallback(async () => {
@@ -575,6 +577,9 @@ function Content() {
       )}
       {loading && (
         <PanelSection><div style={statusStyle}>Loading wishlist...</div></PanelSection>
+      )}
+      {resolvingNames && !loading && (
+        <PanelSection><div style={statusStyle}>Resolving game names...</div></PanelSection>
       )}
 
       {!loading && wishlist.length > 0 && (
