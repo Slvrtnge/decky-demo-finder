@@ -5,44 +5,48 @@ import json as json_module
 import urllib.parse
 import platform
 
+
+def _build_user_agent() -> str:
+    """Build a cross-platform User-Agent string."""
+    system = platform.system()
+    machine = platform.machine() or "x86_64"
+    if system == "Linux":
+        return (
+            f"Mozilla/5.0 (X11; Linux {machine}) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    elif system == "Windows":
+        return (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    elif system == "Darwin":
+        return (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    return (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+
+
+# Built once at module load; reused by all request methods.
+_DEFAULT_HEADERS = {
+    "User-Agent": _build_user_agent(),
+    "Accept": "application/json, text/plain, */*",
+}
+
+
 class Plugin:
     """
     Demo Finder - checks Steam wishlist items for available demos.
     Uses the Steam Store API to fetch app details and identify linked demos.
     """
-
-    @staticmethod
-    def _build_user_agent() -> str:
-        """Build a cross-platform User-Agent string."""
-        system = platform.system()
-        machine = platform.machine() or "x86_64"
-        if system == "Linux":
-            return (
-                f"Mozilla/5.0 (X11; Linux {machine}) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        elif system == "Windows":
-            return (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        elif system == "Darwin":
-            return (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        return (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-
-    BROWSER_HEADERS = {
-        "Accept": "application/json, text/plain, */*",
-    }
 
     async def get_steam_id(self) -> str:
         """
@@ -63,7 +67,7 @@ class Plugin:
         PAGE_SIZE = 100
         all_results = []
         start_index = 0
-        headers = {**self.BROWSER_HEADERS, "User-Agent": self._build_user_agent()}
+        headers = dict(_DEFAULT_HEADERS)
 
         try:
             while True:
@@ -142,7 +146,7 @@ class Plugin:
             "https://api.steampowered.com/IWishlistService/GetWishlist/v1/"
             f"?input_json={urllib.parse.quote(json_module.dumps(input_data))}"
         )
-        headers = {**self.BROWSER_HEADERS, "User-Agent": self._build_user_agent()}
+        headers = dict(_DEFAULT_HEADERS)
         try:
             async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
@@ -185,8 +189,7 @@ class Plugin:
         all_items = []
         page = 0
         headers = {
-            **self.BROWSER_HEADERS,
-            "User-Agent": self._build_user_agent(),
+            **_DEFAULT_HEADERS,
             "Referer": f"https://store.steampowered.com/wishlist/profiles/{steam_id}/",
         }
 
