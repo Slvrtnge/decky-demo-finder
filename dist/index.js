@@ -569,10 +569,11 @@ function Content() {
         });
         setPage(0);
     };
+    // Label shown on the button describes the *next* sort action (what clicking will do)
     const sortLabel = {
-        alpha: "A → Z",
-        date_added: "Date Added",
-        release_date: "Release Date",
+        alpha: "Date Added",
+        date_added: "Release Date",
+        release_date: "A → Z",
     };
     const parseSteamDate = (d) => {
         // Steam dates look like "Mar 14, 2026" or "Q1 2026" or "Coming Soon" etc.

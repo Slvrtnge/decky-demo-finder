@@ -586,10 +586,11 @@ function Content() {
     setPage(0);
   };
 
+  // Label shown on the button describes the *next* sort action (what clicking will do)
   const sortLabel: Record<SortMode, string> = {
-    alpha: "A → Z",
-    date_added: "Date Added",
-    release_date: "Release Date",
+    alpha: "Date Added",
+    date_added: "Release Date",
+    release_date: "A → Z",
   };
 
   const parseSteamDate = (d: string): number => {
