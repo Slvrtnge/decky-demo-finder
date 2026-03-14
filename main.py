@@ -5,6 +5,7 @@ import json as json_module
 import os
 import platform
 import stat
+import time
 
 
 def _build_user_agent() -> str:
@@ -121,6 +122,57 @@ class Plugin:
     Requires a Steam Web API key (free) to access wishlist data.
     """
 
+    # Cached app-name lookup: { appid (int): name (str) }
+    _app_name_cache: dict = {}
+    _app_name_cache_time: float = 0
+    _APP_NAME_CACHE_TTL = 3600  # 1 hour
+    _MAX_CONCURRENT_DEMO_CHECKS = 5
+
+    # ---- App-name resolution ----
+
+    async def _ensure_app_names_loaded(self, session):
+        """
+        Populate ``_app_name_cache`` from ISteamApps/GetAppList/v2 if
+        the cache is empty or stale.  This is a single HTTP request that
+        returns every public Steam app with its name.
+        """
+        now = time.time()
+        if Plugin._app_name_cache and (now - Plugin._app_name_cache_time) < Plugin._APP_NAME_CACHE_TTL:
+            return  # cache is fresh
+
+        url = "https://api.steampowered.com/ISteamApps/GetAppList/v2/"
+        try:
+            async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                if resp.status != 200:
+                    decky.logger.warning(
+                        f"GetAppList returned status {resp.status}"
+                    )
+                    return
+                data = await resp.json(content_type=None)
+                apps = data.get("applist", {}).get("apps", [])
+                cache: dict = {}
+                for app in apps:
+                    aid = app.get("appid")
+                    name = app.get("name")
+                    if aid is not None and name:
+                        cache[int(aid)] = name
+                Plugin._app_name_cache = cache
+                Plugin._app_name_cache_time = now
+                decky.logger.info(
+                    f"App-name cache loaded with {len(cache)} entries"
+                )
+        except Exception as e:
+            decky.logger.warning(f"Failed to load app-name cache: {e}")
+
+    def _apply_cached_names(self, items: list) -> None:
+        """Overwrite placeholder names with real names from the cache."""
+        for item in items:
+            name = item.get("name", "")
+            if not name or name.startswith("App ") or name == "Unknown":
+                real = Plugin._app_name_cache.get(item["appid"])
+                if real:
+                    item["name"] = real
+
     # ---- Settings management ----
 
     async def set_api_key(self, api_key: str) -> bool:
@@ -183,6 +235,7 @@ class Plugin:
                     results.append({
                         "appid": int(appid),
                         "name": item.get("name", f"App {appid}"),
+                        "date_added": item.get("date_added", 0),
                     })
 
                 decky.logger.info(
@@ -230,6 +283,7 @@ class Plugin:
                     results.append({
                         "appid": int(appid),
                         "name": item.get("name", f"App {appid}"),
+                        "date_added": item.get("date_added", 0),
                     })
 
                 decky.logger.info(
@@ -311,7 +365,7 @@ class Plugin:
         Fetch the user's public wishlist from the Steam API.
         Tries authenticated request first (requires API key), then
         falls back to unauthenticated and legacy endpoints.
-        Returns a list of { appid, name } objects, or an error string.
+        Returns a list of { appid, name, date_added } objects, or an error string.
         """
         if not steam_id or not steam_id.strip():
             decky.logger.error("get_wishlist called with empty steam_id")
@@ -326,6 +380,14 @@ class Plugin:
         )
 
         async with aiohttp.ClientSession() as session:
+            # Pre-load the app-name cache in parallel with the wishlist fetch
+            # so name resolution is instant later.
+            name_task = asyncio.ensure_future(
+                self._ensure_app_names_loaded(session)
+            )
+
+            items = None
+
             # Strategy 1: Authenticated request with API key (best method)
             if api_key:
                 items = await self._fetch_wishlist_with_key(
@@ -335,26 +397,33 @@ class Plugin:
                     decky.logger.info(
                         f"Found {len(items)} wishlist items (with key)"
                     )
-                    return items
-                decky.logger.warning(
-                    "Authenticated wishlist fetch failed — "
-                    "API key may be invalid or wishlist may be private"
-                )
+                else:
+                    decky.logger.warning(
+                        "Authenticated wishlist fetch failed — "
+                        "API key may be invalid or wishlist may be private"
+                    )
 
             # Strategy 2: Unauthenticated request (may still work for some)
-            items = await self._fetch_wishlist_no_key(session, steam_id)
-            if items:
-                decky.logger.info(
-                    f"Found {len(items)} wishlist items (no key)"
-                )
-                return items
+            if not items:
+                items = await self._fetch_wishlist_no_key(session, steam_id)
+                if items:
+                    decky.logger.info(
+                        f"Found {len(items)} wishlist items (no key)"
+                    )
 
             # Strategy 3: Legacy store endpoint (deprecated since 2024)
-            items = await self._fetch_wishlist_store(session, steam_id)
+            if not items:
+                items = await self._fetch_wishlist_store(session, steam_id)
+                if items:
+                    decky.logger.info(
+                        f"Found {len(items)} wishlist items (legacy)"
+                    )
+
+            # Wait for the name cache before resolving
+            await name_task
+
             if items:
-                decky.logger.info(
-                    f"Found {len(items)} wishlist items (legacy)"
-                )
+                self._apply_cached_names(items)
                 return items
 
         if not api_key:
@@ -372,14 +441,15 @@ class Plugin:
     async def check_demo(self, appid: int) -> dict:
         """
         Check if a given app has a demo available by querying the Steam Store API.
-        Returns { has_demo: bool, demo_appid: int | None, demo_url: str | None }
+        Returns { has_demo, demo_appid, demo_url, app_url, release_date }
         """
         decky.logger.info(f"Checking demo for appid: {appid}")
         result = {
             "has_demo": False,
             "demo_appid": None,
             "demo_url": None,
-            "app_url": f"https://store.steampowered.com/app/{appid}/"
+            "app_url": f"https://store.steampowered.com/app/{appid}/",
+            "release_date": None,
         }
 
         try:
@@ -398,6 +468,11 @@ class Plugin:
                         return result
 
                     details = app_data.get("data", {})
+
+                    # Extract release date
+                    rd = details.get("release_date", {})
+                    if rd and rd.get("date"):
+                        result["release_date"] = rd["date"]
 
                     # Check for demos in the app details
                     demos = details.get("demos", [])
@@ -420,28 +495,78 @@ class Plugin:
 
         return result
 
+    async def _check_demo_shared_session(self, session, appid: int, semaphore) -> dict:
+        """
+        Like check_demo but reuses an existing session and respects a
+        concurrency semaphore for rate-limit-friendly parallelism.
+        """
+        result = {
+            "has_demo": False,
+            "demo_appid": None,
+            "demo_url": None,
+            "app_url": f"https://store.steampowered.com/app/{appid}/",
+            "release_date": None,
+        }
+        async with semaphore:
+            try:
+                url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+                async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                    if resp.status != 200:
+                        return result
+                    data = await resp.json(content_type=None)
+                    app_data = data.get(str(appid), {})
+                    if not app_data.get("success", False):
+                        return result
+                    details = app_data.get("data", {})
+
+                    rd = details.get("release_date", {})
+                    if rd and rd.get("date"):
+                        result["release_date"] = rd["date"]
+
+                    demos = details.get("demos", [])
+                    if demos and len(demos) > 0:
+                        demo_appid = demos[0].get("appid")
+                        if demo_appid:
+                            result["has_demo"] = True
+                            result["demo_appid"] = int(demo_appid)
+                            result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
+            except Exception as e:
+                decky.logger.warning(f"Concurrent demo check failed for {appid}: {e}")
+        return result
+
     async def check_demos_batch(self, appids: list) -> dict:
         """
-        Check multiple appids for demos in batch. 
-        Returns a dict keyed by appid string with demo info.
-        We throttle requests to avoid hitting Steam's rate limit.
+        Check multiple appids for demos concurrently.
+        Uses a semaphore to limit parallel requests and stay within
+        Steam's rate limits while being significantly faster than
+        sequential processing.
         """
+        semaphore = asyncio.Semaphore(Plugin._MAX_CONCURRENT_DEMO_CHECKS)
+
+        async with aiohttp.ClientSession() as session:
+            async def _check(aid):
+                return str(aid), await self._check_demo_shared_session(session, int(aid), semaphore)
+
+            tasks = [_check(appid) for appid in appids]
+            pairs = await asyncio.gather(*tasks, return_exceptions=True)
+
         results = {}
-        
+        for pair in pairs:
+            if isinstance(pair, Exception):
+                continue
+            appid_str, demo_info = pair
+            results[appid_str] = demo_info
+
+        # Fill in any missing appids with default result
         for appid in appids:
-            try:
-                demo_info = await self.check_demo(int(appid))
-                results[str(appid)] = demo_info
-            except Exception as e:
-                decky.logger.error(f"Error in batch check for {appid}: {e}")
+            if str(appid) not in results:
                 results[str(appid)] = {
                     "has_demo": False,
                     "demo_appid": None,
                     "demo_url": None,
-                    "app_url": f"https://store.steampowered.com/app/{appid}/"
+                    "app_url": f"https://store.steampowered.com/app/{appid}/",
+                    "release_date": None,
                 }
-            # Throttle: Steam rate-limits the store API
-            await asyncio.sleep(0.3)
 
         return results
 

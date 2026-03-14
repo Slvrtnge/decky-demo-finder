@@ -13,8 +13,8 @@ import {
   toaster,
   fetchNoCors,
 } from "@decky/api";
-import { useState, useEffect, useCallback, useRef, Fragment, FC } from "react";
-import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey } from "react-icons/fa";
+import { useState, useEffect, useCallback, useRef, Fragment, FC, useMemo } from "react";
+import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown } from "react-icons/fa";
 
 // ---- Backend callables ----
 const getWishlist = callable<[steam_id: string], WishlistItem[] | string>("get_wishlist");
@@ -26,6 +26,7 @@ const getApiKey = callable<[], string>("get_api_key");
 interface WishlistItem {
   appid: number;
   name: string;
+  date_added?: number;
 }
 
 interface DemoInfo {
@@ -33,13 +34,16 @@ interface DemoInfo {
   demo_appid: number | null;
   demo_url: string | null;
   app_url: string;
+  release_date?: string | null;
 }
 
 interface WishlistItemWithDemo extends WishlistItem {
   demoInfo?: DemoInfo;
 }
 
-const BATCH_SIZE = 10;
+type SortMode = "alpha" | "date_added" | "release_date";
+
+const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 
 const API_KEY_HELP_URL = "https://steamcommunity.com/dev/apikey";
@@ -123,9 +127,10 @@ async function fetchWishlistFrontend(steamId: string, apiKey: string): Promise<W
     }
     return items
       .filter((item: { appid?: number }) => item.appid != null)
-      .map((item: { appid: number; name?: string }) => ({
+      .map((item: { appid: number; name?: string; date_added?: number }) => ({
         appid: item.appid,
         name: item.name || `App ${item.appid}`,
+        date_added: item.date_added || 0,
       }));
   } catch (e) {
     console.error("[Demo Finder] Frontend wishlist fetch failed:", e);
@@ -267,6 +272,7 @@ function Content() {
   const [hasScanned, setHasScanned] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [sortBy, setSortBy] = useState<SortMode>("alpha");
 
   const checkApiKey = useCallback(async () => {
     try {
@@ -406,9 +412,47 @@ function Content() {
     loadWishlist();
   };
 
-  const displayItems = filterDemoOnly
-    ? wishlist.filter((item) => item.demoInfo?.has_demo)
-    : wishlist;
+  const cycleSortMode = () => {
+    setSortBy((prev) => {
+      if (prev === "alpha") return "date_added";
+      if (prev === "date_added") return "release_date";
+      return "alpha";
+    });
+    setPage(0);
+  };
+
+  const sortLabel: Record<SortMode, string> = {
+    alpha: "A → Z",
+    date_added: "Date Added",
+    release_date: "Release Date",
+  };
+
+  const parseSteamDate = (d: string): number => {
+    // Steam dates look like "Mar 14, 2026" or "Q1 2026" or "Coming Soon" etc.
+    const ts = Date.parse(d);
+    return isNaN(ts) ? Infinity : ts;
+  };
+
+  const sortedFilteredItems = useMemo(() => {
+    const base = filterDemoOnly
+      ? wishlist.filter((item) => item.demoInfo?.has_demo)
+      : wishlist;
+    const sorted = [...base];
+    if (sortBy === "alpha") {
+      sorted.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    } else if (sortBy === "date_added") {
+      sorted.sort((a, b) => (b.date_added ?? 0) - (a.date_added ?? 0));
+    } else if (sortBy === "release_date") {
+      sorted.sort((a, b) => {
+        const da = a.demoInfo?.release_date ? parseSteamDate(a.demoInfo.release_date) : Infinity;
+        const db = b.demoInfo?.release_date ? parseSteamDate(b.demoInfo.release_date) : Infinity;
+        return da - db;
+      });
+    }
+    return sorted;
+  }, [wishlist, filterDemoOnly, sortBy]);
+
+  const displayItems = sortedFilteredItems;
   const totalPages = Math.ceil(displayItems.length / ITEMS_PER_PAGE);
   const pagedItems = displayItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
   const demosFoundCount = wishlist.filter((item) => item.demoInfo?.has_demo).length;
@@ -440,6 +484,17 @@ function Content() {
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}>
               {filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})`}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+
+        {wishlist.length > 0 && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={cycleSortMode}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+                <FaSortAlphaDown size={14} />
+                Sort: {sortLabel[sortBy]}
+              </div>
             </ButtonItem>
           </PanelSectionRow>
         )}
