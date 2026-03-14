@@ -33,52 +33,70 @@ class Plugin:
         This is the endpoint Steam's own storefront uses.
         Returns list of {appid, name} on success, or None on failure.
         """
-        input_data = {
-            "steamid": steam_id,
-            "context": {"language": "english", "country_code": "US"},
-            "data_request": {"include_basic_info": True},
-            "start_index": 0,
-            "page_size": 2000,
-        }
-        url = (
-            "https://api.steampowered.com/IWishlistService/GetWishlistSortedFiltered/v1/"
-            f"?input_json={urllib.parse.quote(json_module.dumps(input_data))}"
-        )
+        PAGE_SIZE = 100
+        all_results = []
+        start_index = 0
+
         try:
-            async with session.get(url, headers=self.BROWSER_HEADERS) as resp:
-                if resp.status != 200:
-                    decky.logger.warning(
-                        f"GetWishlistSortedFiltered returned status {resp.status}"
-                    )
-                    return None
-
-                text = await resp.text()
-                if not text or not text.strip():
-                    decky.logger.warning("GetWishlistSortedFiltered returned empty body")
-                    return None
-
-                data = json_module.loads(text)
-                response = data.get("response", {})
-                items = response.get("items", [])
-
-                results = []
-                for item in items:
-                    appid = item.get("appid")
-                    if appid is None:
-                        continue
-                    # Name may be nested in store_item or at top level
-                    name = "Unknown"
-                    store_item = item.get("store_item", {})
-                    if isinstance(store_item, dict):
-                        name = store_item.get("name", name)
-                    if name == "Unknown":
-                        name = item.get("name", name)
-                    results.append({"appid": int(appid), "name": name})
-
-                decky.logger.info(
-                    f"GetWishlistSortedFiltered returned {len(results)} items"
+            while True:
+                input_data = {
+                    "steamid": int(steam_id),
+                    "context": {
+                        "language": "english",
+                        "elanguage": 0,
+                        "country_code": "US",
+                        "steam_realm": 1,
+                    },
+                    "data_request": {"include_basic_info": True},
+                    "start_index": start_index,
+                    "page_size": PAGE_SIZE,
+                }
+                url = (
+                    "https://api.steampowered.com/IWishlistService/GetWishlistSortedFiltered/v1/"
+                    f"?input_json={urllib.parse.quote(json_module.dumps(input_data))}"
                 )
-                return results if results else None
+                async with session.get(url, headers=self.BROWSER_HEADERS) as resp:
+                    if resp.status != 200:
+                        decky.logger.warning(
+                            f"GetWishlistSortedFiltered returned status {resp.status}"
+                        )
+                        return None
+
+                    text = await resp.text()
+                    if not text or not text.strip():
+                        decky.logger.warning("GetWishlistSortedFiltered returned empty body")
+                        return None
+
+                    data = json_module.loads(text)
+                    response = data.get("response", {})
+                    items = response.get("items", [])
+
+                    if not items:
+                        break
+
+                    for item in items:
+                        appid = item.get("appid")
+                        if appid is None:
+                            continue
+                        # Name may be nested in store_item or at top level
+                        name = "Unknown"
+                        store_item = item.get("store_item", {})
+                        if isinstance(store_item, dict):
+                            name = store_item.get("name", name)
+                        if name == "Unknown":
+                            name = item.get("name", name)
+                        all_results.append({"appid": int(appid), "name": name})
+
+                    # Check if there are more pages
+                    if len(items) < PAGE_SIZE:
+                        break
+                    start_index += len(items)
+
+            if all_results:
+                decky.logger.info(
+                    f"GetWishlistSortedFiltered returned {len(all_results)} items"
+                )
+            return all_results if all_results else None
 
         except Exception as e:
             decky.logger.warning(f"GetWishlistSortedFiltered failed: {e}")
@@ -90,9 +108,10 @@ class Plugin:
         Simpler endpoint that returns appids (names may not be included).
         Returns list of {appid, name} on success, or None on failure.
         """
+        input_data = {"steamid": int(steam_id)}
         url = (
             "https://api.steampowered.com/IWishlistService/GetWishlist/v1/"
-            f"?steamid={steam_id}"
+            f"?input_json={urllib.parse.quote(json_module.dumps(input_data))}"
         )
         try:
             async with session.get(url, headers=self.BROWSER_HEADERS) as resp:
