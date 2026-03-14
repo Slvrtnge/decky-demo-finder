@@ -5,6 +5,7 @@ import {
   Navigation,
   staticClasses,
   Focusable,
+  TextField,
 } from "@decky/ui";
 import {
   callable,
@@ -13,11 +14,13 @@ import {
   fetchNoCors,
 } from "@decky/api";
 import { useState, useEffect, useCallback, Fragment, FC } from "react";
-import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt } from "react-icons/fa";
+import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey } from "react-icons/fa";
 
 // ---- Backend callables ----
-const getWishlist = callable<[steam_id: string], WishlistItem[]>("get_wishlist");
+const getWishlist = callable<[steam_id: string], WishlistItem[] | string>("get_wishlist");
 const checkDemosBatch = callable<[appids: number[]], Record<string, DemoInfo>>("check_demos_batch");
+const setApiKey = callable<[api_key: string], boolean>("set_api_key");
+const getApiKey = callable<[], string>("get_api_key");
 
 // ---- Types ----
 interface WishlistItem {
@@ -38,6 +41,8 @@ interface WishlistItemWithDemo extends WishlistItem {
 
 const BATCH_SIZE = 10;
 const ITEMS_PER_PAGE = 20;
+
+const API_KEY_HELP_URL = "https://steamcommunity.com/dev/apikey";
 
 // ---- Styles ----
 const containerStyle: React.CSSProperties = {
@@ -79,6 +84,11 @@ const pageBtnStyle: React.CSSProperties = {
   cursor: "pointer", fontSize: "12px",
 };
 
+const helpTextStyle: React.CSSProperties = {
+  fontSize: "11px", color: "rgba(255,255,255,0.5)",
+  padding: "4px 0", lineHeight: "1.4",
+};
+
 // ---- Helpers ----
 function getSteamId(): string {
   try {
@@ -91,12 +101,14 @@ function getSteamId(): string {
 
 /**
  * Frontend fallback: fetch wishlist via fetchNoCors (Decky proxy).
- * Uses IWishlistService/GetWishlist/v1 with steamid as a string.
+ * Uses IWishlistService/GetWishlist/v1 with API key and steamid.
  */
-async function fetchWishlistFrontend(steamId: string): Promise<WishlistItem[]> {
+async function fetchWishlistFrontend(steamId: string, apiKey: string): Promise<WishlistItem[]> {
   try {
-    const inputJson = JSON.stringify({ steamid: steamId });
-    const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?input_json=${encodeURIComponent(inputJson)}`;
+    let url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${steamId}`;
+    if (apiKey) {
+      url += `&key=${apiKey}`;
+    }
     const resp = await fetchNoCors(url, {
       headers: { "Accept": "application/json" },
     });
@@ -162,6 +174,67 @@ const GameStoreLinkButton: FC<{ appid: number; gameName: string }> = ({ appid, g
   );
 };
 
+// ---- API Key Setup ----
+const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, onKeySaved }) => {
+  const [keyInput, setKeyInput] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!keyInput.trim()) return;
+    setSaving(true);
+    try {
+      await setApiKey(keyInput.trim());
+      toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
+      setKeyInput("");
+      onKeySaved();
+    } catch (e) {
+      console.error("[Demo Finder] Failed to save API key:", e);
+      toaster.toast({ title: "Demo Finder", body: "Failed to save API key." });
+    }
+    setSaving(false);
+  };
+
+  const openKeyPage = () => {
+    Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+    Navigation.CloseSideMenus();
+  };
+
+  return (
+    <PanelSection title="Steam API Key Setup">
+      <div style={helpTextStyle}>
+        {hasKey
+          ? "✅ API key is configured. You can update it below if needed."
+          : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register."}
+      </div>
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={openKeyPage}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+            <FaKey size={12} /> Get Your Free API Key
+          </div>
+        </ButtonItem>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <TextField
+          label="Steam Web API Key"
+          value={keyInput}
+          onChange={(e) => setKeyInput(e?.target?.value ?? "")}
+          bIsPassword={true}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={handleSave} disabled={saving || !keyInput.trim()}>
+          {saving ? "Saving..." : "Save API Key"}
+        </ButtonItem>
+      </PanelSectionRow>
+      <div style={helpTextStyle}>
+        Go to steamcommunity.com/dev/apikey to register a key.
+        Enter any domain name (e.g. "localhost").
+        Your wishlist must also be set to Public.
+      </div>
+    </PanelSection>
+  );
+};
+
 // ---- Main Content ----
 function Content() {
   const [wishlist, setWishlist] = useState<WishlistItemWithDemo[]>([]);
@@ -172,6 +245,19 @@ function Content() {
   const [page, setPage] = useState(0);
   const [filterDemoOnly, setFilterDemoOnly] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+
+  const checkApiKey = useCallback(async () => {
+    try {
+      const key = await getApiKey();
+      setHasApiKey(!!key);
+      return !!key;
+    } catch {
+      setHasApiKey(false);
+      return false;
+    }
+  }, []);
 
   const loadWishlist = useCallback(async () => {
     setLoading(true);
@@ -185,17 +271,55 @@ function Content() {
         return;
       }
 
-      // Strategy 1: Backend fetch (tries multiple API endpoints)
-      let items = await getWishlist(steamId);
+      // Backend fetch (tries authenticated, then unauthenticated, then legacy)
+      const result = await getWishlist(steamId);
 
-      // Strategy 2: Frontend fallback via fetchNoCors
-      if (!items || items.length === 0) {
-        console.log("[Demo Finder] Backend returned empty, trying frontend fallback...");
-        items = await fetchWishlistFrontend(steamId);
+      // Backend returns error codes as strings when it fails
+      if (typeof result === "string") {
+        if (result === "NO_API_KEY") {
+          setError("No Steam API key configured. Please set up your API key below to load your wishlist.");
+          setShowSetup(true);
+          setWishlist([]);
+          setLoading(false);
+          return;
+        }
+        if (result === "NO_STEAM_ID") {
+          setError("Could not detect your Steam ID. Make sure you are logged in.");
+          setLoading(false);
+          return;
+        }
+        if (result === "FETCH_FAILED") {
+          setError("Failed to load wishlist. Check that your API key is valid and your wishlist is set to Public.");
+          setShowSetup(true);
+          setWishlist([]);
+          setLoading(false);
+          return;
+        }
       }
 
-      if (!items || items.length === 0) {
-        setError("Wishlist is empty or could not be loaded. Ensure your wishlist privacy is set to Public in Steam Settings > Privacy Settings.");
+      const items = Array.isArray(result) ? result : [];
+
+      // Frontend fallback via fetchNoCors
+      if (items.length === 0) {
+        console.log("[Demo Finder] Backend returned empty, trying frontend fallback...");
+        const apiKey = await getApiKey();
+        const fallbackItems = await fetchWishlistFrontend(steamId, apiKey);
+        if (fallbackItems.length > 0) {
+          setWishlist(fallbackItems.map((item) => ({ ...item })));
+          setPage(0);
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (items.length === 0) {
+        const keySet = await checkApiKey();
+        if (!keySet) {
+          setError("No Steam API key configured. Please set up your API key below to load your wishlist.");
+          setShowSetup(true);
+        } else {
+          setError("Wishlist is empty or could not be loaded. Ensure your wishlist is set to Public and your API key is valid.");
+        }
         setWishlist([]);
       } else {
         setWishlist(items.map((item) => ({ ...item })));
@@ -205,7 +329,7 @@ function Content() {
       setError(`Failed to load wishlist: ${e}`);
     }
     setLoading(false);
-  }, []);
+  }, [checkApiKey]);
 
   const scanForDemos = useCallback(async () => {
     if (wishlist.length === 0) return;
@@ -245,7 +369,22 @@ function Content() {
     });
   }, [wishlist]);
 
-  useEffect(() => { loadWishlist(); }, [loadWishlist]);
+  useEffect(() => {
+    checkApiKey().then((hasKey) => {
+      if (!hasKey) {
+        setShowSetup(true);
+        setError("Steam API key required. Please configure your key below to get started.");
+      }
+      loadWishlist();
+    });
+  }, [checkApiKey, loadWishlist]);
+
+  const handleKeySaved = () => {
+    setHasApiKey(true);
+    setShowSetup(false);
+    setError(null);
+    loadWishlist();
+  };
 
   const displayItems = filterDemoOnly
     ? wishlist.filter((item) => item.demoInfo?.has_demo)
@@ -284,11 +423,25 @@ function Content() {
             </ButtonItem>
           </PanelSectionRow>
         )}
+
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => setShowSetup(!showSetup)}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+              <FaKey size={12} />
+              {showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")}
+            </div>
+          </ButtonItem>
+        </PanelSectionRow>
       </PanelSection>
 
       {error && (
         <PanelSection><div style={{ ...statusStyle, color: "#ff6b6b" }}>{error}</div></PanelSection>
       )}
+
+      {showSetup && (
+        <ApiKeySetup hasKey={hasApiKey} onKeySaved={handleKeySaved} />
+      )}
+
       {scanning && (
         <PanelSection><div style={statusStyle}>{scanProgress}</div></PanelSection>
       )}

@@ -86,6 +86,8 @@ function FaSyncAlt (props) {
   return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M370.72 133.28C339.458 104.008 298.888 87.962 255.848 88c-77.458.068-144.328 53.178-162.791 126.85-1.344 5.363-6.122 9.15-11.651 9.15H24.103c-7.498 0-13.194-6.807-11.807-14.176C33.933 94.924 134.813 8 256 8c66.448 0 126.791 26.136 171.315 68.685L463.03 40.97C478.149 25.851 504 36.559 504 57.941V192c0 13.255-10.745 24-24 24H345.941c-21.382 0-32.09-25.851-16.971-40.971l41.75-41.749zM32 296h134.059c21.382 0 32.09 25.851 16.971 40.971l-41.75 41.75c31.262 29.273 71.835 45.319 114.876 45.28 77.418-.07 144.315-53.144 162.787-126.849 1.344-5.363 6.122-9.15 11.651-9.15h57.304c7.498 0 13.194 6.807 11.807 14.176C478.067 417.076 377.187 504 256 504c-66.448 0-126.791-26.136-171.315-68.685L48.97 471.03C33.851 486.149 8 475.441 8 454.059V320c0-13.255 10.745-24 24-24z"},"child":[]}]})(props);
 }function FaSearch (props) {
   return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M505 442.7L405.3 343c-4.5-4.5-10.6-7-17-7H372c27.6-35.3 44-79.7 44-128C416 93.1 322.9 0 208 0S0 93.1 0 208s93.1 208 208 208c48.3 0 92.7-16.4 128-44v16.3c0 6.4 2.5 12.5 7 17l99.7 99.7c9.4 9.4 24.6 9.4 33.9 0l28.3-28.3c9.4-9.4 9.4-24.6.1-34zM208 336c-70.7 0-128-57.2-128-128 0-70.7 57.2-128 128-128 70.7 0 128 57.2 128 128 0 70.7-57.2 128-128 128z"},"child":[]}]})(props);
+}function FaKey (props) {
+  return GenIcon({"attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M512 176.001C512 273.203 433.202 352 336 352c-11.22 0-22.19-1.062-32.827-3.069l-24.012 27.014A23.999 23.999 0 0 1 261.223 384H224v40c0 13.255-10.745 24-24 24h-40v40c0 13.255-10.745 24-24 24H24c-13.255 0-24-10.745-24-24v-78.059c0-6.365 2.529-12.47 7.029-16.971l161.802-161.802C163.108 213.814 160 195.271 160 176 160 78.798 238.797.001 335.999 0 433.488-.001 512 78.511 512 176.001zM336 128c0 26.51 21.49 48 48 48s48-21.49 48-48-21.49-48-48-48-48 21.49-48 48z"},"child":[]}]})(props);
 }function FaGamepad (props) {
   return GenIcon({"attr":{"viewBox":"0 0 640 512"},"child":[{"tag":"path","attr":{"d":"M480.07 96H160a160 160 0 1 0 114.24 272h91.52A160 160 0 1 0 480.07 96zM248 268a12 12 0 0 1-12 12h-52v52a12 12 0 0 1-12 12h-24a12 12 0 0 1-12-12v-52H84a12 12 0 0 1-12-12v-24a12 12 0 0 1 12-12h52v-52a12 12 0 0 1 12-12h24a12 12 0 0 1 12 12v52h52a12 12 0 0 1 12 12zm216 76a40 40 0 1 1 40-40 40 40 0 0 1-40 40zm64-96a40 40 0 1 1 40-40 40 40 0 0 1-40 40z"},"child":[]}]})(props);
 }function FaExternalLinkAlt (props) {
@@ -95,8 +97,11 @@ function FaSyncAlt (props) {
 // ---- Backend callables ----
 const getWishlist = callable("get_wishlist");
 const checkDemosBatch = callable("check_demos_batch");
+const setApiKey = callable("set_api_key");
+const getApiKey = callable("get_api_key");
 const BATCH_SIZE = 10;
 const ITEMS_PER_PAGE = 20;
+const API_KEY_HELP_URL = "https://steamcommunity.com/dev/apikey";
 // ---- Styles ----
 const containerStyle = {
     display: "flex", flexDirection: "column", gap: "4px",
@@ -130,6 +135,10 @@ const pageBtnStyle = {
     background: "rgba(255,255,255,0.1)", color: "#fff",
     cursor: "pointer", fontSize: "12px",
 };
+const helpTextStyle = {
+    fontSize: "11px", color: "rgba(255,255,255,0.5)",
+    padding: "4px 0", lineHeight: "1.4",
+};
 // ---- Helpers ----
 function getSteamId() {
     try {
@@ -143,12 +152,14 @@ function getSteamId() {
 }
 /**
  * Frontend fallback: fetch wishlist via fetchNoCors (Decky proxy).
- * Uses IWishlistService/GetWishlist/v1 with steamid as a string.
+ * Uses IWishlistService/GetWishlist/v1 with API key and steamid.
  */
-async function fetchWishlistFrontend(steamId) {
+async function fetchWishlistFrontend(steamId, apiKey) {
     try {
-        const inputJson = JSON.stringify({ steamid: steamId });
-        const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?input_json=${encodeURIComponent(inputJson)}`;
+        let url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?steamid=${steamId}`;
+        if (apiKey) {
+            url += `&key=${apiKey}`;
+        }
         const resp = await fetchNoCors(url, {
             headers: { "Accept": "application/json" },
         });
@@ -192,6 +203,34 @@ const GameStoreLinkButton = ({ appid, gameName }) => {
     };
     return (SP_JSX.jsx(DFL.Focusable, { style: { display: "inline-flex" }, onActivate: handleClick, children: SP_JSX.jsx("div", { style: { ...demoBadgeStyle, background: "rgba(255,255,255,0.1)" }, onClick: handleClick, title: "Open store page", children: SP_JSX.jsx(FaExternalLinkAlt, { size: 10 }) }) }));
 };
+// ---- API Key Setup ----
+const ApiKeySetup = ({ hasKey, onKeySaved }) => {
+    const [keyInput, setKeyInput] = SP_REACT.useState("");
+    const [saving, setSaving] = SP_REACT.useState(false);
+    const handleSave = async () => {
+        if (!keyInput.trim())
+            return;
+        setSaving(true);
+        try {
+            await setApiKey(keyInput.trim());
+            toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
+            setKeyInput("");
+            onKeySaved();
+        }
+        catch (e) {
+            console.error("[Demo Finder] Failed to save API key:", e);
+            toaster.toast({ title: "Demo Finder", body: "Failed to save API key." });
+        }
+        setSaving(false);
+    };
+    const openKeyPage = () => {
+        DFL.Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+        DFL.Navigation.CloseSideMenus();
+    };
+    return (SP_JSX.jsxs(DFL.PanelSection, { title: "Steam API Key Setup", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
+                    ? "✅ API key is configured. You can update it below if needed."
+                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving || !keyInput.trim(), children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
+};
 // ---- Main Content ----
 function Content() {
     const [wishlist, setWishlist] = SP_REACT.useState([]);
@@ -202,6 +241,19 @@ function Content() {
     const [page, setPage] = SP_REACT.useState(0);
     const [filterDemoOnly, setFilterDemoOnly] = SP_REACT.useState(false);
     const [hasScanned, setHasScanned] = SP_REACT.useState(false);
+    const [hasApiKey, setHasApiKey] = SP_REACT.useState(false);
+    const [showSetup, setShowSetup] = SP_REACT.useState(false);
+    const checkApiKey = SP_REACT.useCallback(async () => {
+        try {
+            const key = await getApiKey();
+            setHasApiKey(!!key);
+            return !!key;
+        }
+        catch {
+            setHasApiKey(false);
+            return false;
+        }
+    }, []);
     const loadWishlist = SP_REACT.useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -213,15 +265,52 @@ function Content() {
                 setLoading(false);
                 return;
             }
-            // Strategy 1: Backend fetch (tries multiple API endpoints)
-            let items = await getWishlist(steamId);
-            // Strategy 2: Frontend fallback via fetchNoCors
-            if (!items || items.length === 0) {
-                console.log("[Demo Finder] Backend returned empty, trying frontend fallback...");
-                items = await fetchWishlistFrontend(steamId);
+            // Backend fetch (tries authenticated, then unauthenticated, then legacy)
+            const result = await getWishlist(steamId);
+            // Backend returns error codes as strings when it fails
+            if (typeof result === "string") {
+                if (result === "NO_API_KEY") {
+                    setError("No Steam API key configured. Please set up your API key below to load your wishlist.");
+                    setShowSetup(true);
+                    setWishlist([]);
+                    setLoading(false);
+                    return;
+                }
+                if (result === "NO_STEAM_ID") {
+                    setError("Could not detect your Steam ID. Make sure you are logged in.");
+                    setLoading(false);
+                    return;
+                }
+                if (result === "FETCH_FAILED") {
+                    setError("Failed to load wishlist. Check that your API key is valid and your wishlist is set to Public.");
+                    setShowSetup(true);
+                    setWishlist([]);
+                    setLoading(false);
+                    return;
+                }
             }
-            if (!items || items.length === 0) {
-                setError("Wishlist is empty or could not be loaded. Ensure your wishlist privacy is set to Public in Steam Settings > Privacy Settings.");
+            const items = Array.isArray(result) ? result : [];
+            // Frontend fallback via fetchNoCors
+            if (items.length === 0) {
+                console.log("[Demo Finder] Backend returned empty, trying frontend fallback...");
+                const apiKey = await getApiKey();
+                const fallbackItems = await fetchWishlistFrontend(steamId, apiKey);
+                if (fallbackItems.length > 0) {
+                    setWishlist(fallbackItems.map((item) => ({ ...item })));
+                    setPage(0);
+                    setLoading(false);
+                    return;
+                }
+            }
+            if (items.length === 0) {
+                const keySet = await checkApiKey();
+                if (!keySet) {
+                    setError("No Steam API key configured. Please set up your API key below to load your wishlist.");
+                    setShowSetup(true);
+                }
+                else {
+                    setError("Wishlist is empty or could not be loaded. Ensure your wishlist is set to Public and your API key is valid.");
+                }
                 setWishlist([]);
             }
             else {
@@ -233,7 +322,7 @@ function Content() {
             setError(`Failed to load wishlist: ${e}`);
         }
         setLoading(false);
-    }, []);
+    }, [checkApiKey]);
     const scanForDemos = SP_REACT.useCallback(async () => {
         if (wishlist.length === 0)
             return;
@@ -269,14 +358,28 @@ function Content() {
             body: `Done! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in ${wishlist.length} games.`,
         });
     }, [wishlist]);
-    SP_REACT.useEffect(() => { loadWishlist(); }, [loadWishlist]);
+    SP_REACT.useEffect(() => {
+        checkApiKey().then((hasKey) => {
+            if (!hasKey) {
+                setShowSetup(true);
+                setError("Steam API key required. Please configure your key below to get started.");
+            }
+            loadWishlist();
+        });
+    }, [checkApiKey, loadWishlist]);
+    const handleKeySaved = () => {
+        setHasApiKey(true);
+        setShowSetup(false);
+        setError(null);
+        loadWishlist();
+    };
     const displayItems = filterDemoOnly
         ? wishlist.filter((item) => item.demoInfo?.has_demo)
         : wishlist;
     const totalPages = Math.ceil(displayItems.length / ITEMS_PER_PAGE);
     const pagedItems = displayItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
     const demosFoundCount = wishlist.filter((item) => item.demoInfo?.has_demo).length;
-    return (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Wishlist Demo Finder", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: loadWishlist, disabled: loading || scanning, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSyncAlt, { size: 14 }), loading ? "Loading..." : "Refresh Wishlist"] }) }) }), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: scanForDemos, disabled: scanning || loading, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSearch, { size: 14 }), scanning ? "Scanning..." : `Scan ${wishlist.length} Games for Demos`] }) }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})` }) }))] }), error && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: { ...statusStyle, color: "#ff6b6b" }, children: error }) })), scanning && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: scanProgress }) })), loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Loading wishlist..." }) })), !loading && wishlist.length > 0 && (SP_JSX.jsxs(DFL.PanelSection, { title: filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`, children: [SP_JSX.jsx("div", { style: containerStyle, children: pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: itemContainerStyle, children: [SP_JSX.jsx("div", { style: gameNameStyle, title: item.name, children: item.name }), SP_JSX.jsxs("div", { style: { display: "flex", gap: "4px", alignItems: "center" }, children: [item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DemoButton, { demoInfo: item.demoInfo, gameName: item.name })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" }))) : hasScanned ? (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "\u2014" })), SP_JSX.jsx(GameStoreLinkButton, { appid: item.appid, gameName: item.name })] })] }, item.appid))) }), totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "\u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6" }) })] }))] }))] }));
+    return (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Wishlist Demo Finder", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: loadWishlist, disabled: loading || scanning, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSyncAlt, { size: 14 }), loading ? "Loading..." : "Refresh Wishlist"] }) }) }), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: scanForDemos, disabled: scanning || loading, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSearch, { size: 14 }), scanning ? "Scanning..." : `Scan ${wishlist.length} Games for Demos`] }) }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})` }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowSetup(!showSetup), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")] }) }) })] }), error && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: { ...statusStyle, color: "#ff6b6b" }, children: error }) })), showSetup && (SP_JSX.jsx(ApiKeySetup, { hasKey: hasApiKey, onKeySaved: handleKeySaved })), scanning && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: scanProgress }) })), loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Loading wishlist..." }) })), !loading && wishlist.length > 0 && (SP_JSX.jsxs(DFL.PanelSection, { title: filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`, children: [SP_JSX.jsx("div", { style: containerStyle, children: pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: itemContainerStyle, children: [SP_JSX.jsx("div", { style: gameNameStyle, title: item.name, children: item.name }), SP_JSX.jsxs("div", { style: { display: "flex", gap: "4px", alignItems: "center" }, children: [item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DemoButton, { demoInfo: item.demoInfo, gameName: item.name })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" }))) : hasScanned ? (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "\u2014" })), SP_JSX.jsx(GameStoreLinkButton, { appid: item.appid, gameName: item.name })] })] }, item.appid))) }), totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "\u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6" }) })] }))] }))] }));
 }
 // ---- Plugin Registration ----
 var index = definePlugin(() => {
