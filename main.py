@@ -126,6 +126,7 @@ class Plugin:
     _app_name_cache: dict = {}
     _app_name_cache_time: float = 0
     _APP_NAME_CACHE_TTL = 3600  # 1 hour
+    _MAX_CONCURRENT_DEMO_CHECKS = 5
 
     # ---- App-name resolution ----
 
@@ -540,12 +541,12 @@ class Plugin:
         Steam's rate limits while being significantly faster than
         sequential processing.
         """
-        semaphore = asyncio.Semaphore(5)
-
-        async def _check(aid):
-            return str(aid), await self._check_demo_shared_session(session, int(aid), semaphore)
+        semaphore = asyncio.Semaphore(Plugin._MAX_CONCURRENT_DEMO_CHECKS)
 
         async with aiohttp.ClientSession() as session:
+            async def _check(aid):
+                return str(aid), await self._check_demo_shared_session(session, int(aid), semaphore)
+
             tasks = [_check(appid) for appid in appids]
             pairs = await asyncio.gather(*tasks, return_exceptions=True)
 
