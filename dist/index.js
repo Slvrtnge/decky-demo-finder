@@ -192,6 +192,10 @@ async function fetchWishlistFrontend(steamId, apiKey) {
         return [];
     }
 }
+/** Returns true if the item has a placeholder name that still needs resolving. */
+function isPlaceholderName(item) {
+    return !item.name || item.name.startsWith("App ") || item.name === "Unknown";
+}
 /**
  * For any wishlist items that still carry placeholder names (e.g. "App 12345")
  * after the backend has already done its best, call resolve_names_batch to
@@ -201,14 +205,14 @@ async function fetchWishlistFrontend(steamId, apiKey) {
  * @returns A new array with placeholder names replaced by real game titles where possible.
  */
 async function resolveItemNames(items) {
-    const placeholders = items.filter((item) => !item.name || item.name.startsWith("App ") || item.name === "Unknown");
+    const placeholders = items.filter(isPlaceholderName);
     if (placeholders.length === 0)
         return items;
     try {
         const names = await resolveNamesBatch(placeholders.map((p) => p.appid));
         return items.map((item) => {
             const resolved = names[String(item.appid)];
-            if (resolved && (!item.name || item.name.startsWith("App ") || item.name === "Unknown")) {
+            if (resolved && isPlaceholderName(item)) {
                 return { ...item, name: resolved };
             }
             return item;
@@ -219,7 +223,35 @@ async function resolveItemNames(items) {
         return items;
     }
 }
-// ---- Sub-Components ----
+/**
+ * Resolve placeholder names by calling checkDemosBatch on items that still
+ * have "App #" placeholder names. The _check_demo_shared_session backend
+ * already fetches appdetails and extracts the game name, so this leverages
+ * the same mechanism that scanForDemos uses to fix names.
+ *
+ * @param items - The current wishlist (including items with real names).
+ * @returns A new array with placeholder names replaced by real game titles where possible.
+ */
+async function resolveNamesViaDemoBatch(items) {
+    const placeholders = items.filter(isPlaceholderName);
+    if (placeholders.length === 0)
+        return items;
+    try {
+        const appids = placeholders.map((p) => p.appid);
+        const results = await checkDemosBatch(appids);
+        return items.map((item) => {
+            const demoResult = results[String(item.appid)];
+            if (demoResult?.name && isPlaceholderName(item)) {
+                return { ...item, name: demoResult.name };
+            }
+            return item;
+        });
+    }
+    catch (e) {
+        console.warn("[Demo Finder] Demo-batch name resolution failed:", e);
+        return items;
+    }
+}
 const DemoButton = ({ demoInfo, gameName }) => {
     const handleClick = () => {
         if (demoInfo.demo_appid) {
@@ -373,8 +405,26 @@ function Content() {
             setLoading(false);
             setResolvingNames(true);
             try {
-                const resolvedItems = await resolveItemNames(items);
+                let resolvedItems = await resolveItemNames(items);
                 setWishlist(resolvedItems.map((item) => ({ ...item })));
+                // Second pass: use checkDemosBatch to resolve remaining placeholders.
+                // _check_demo_shared_session already fetches appdetails and extracts
+                // the game name, so this leverages the same data without extra requests.
+                const stillMissing = resolvedItems.filter(isPlaceholderName);
+                if (stillMissing.length > 0 && resolvedItems.length <= 200) {
+                    console.log(`[Demo Finder] ${stillMissing.length} placeholder(s) remain — running demo-batch name resolution`);
+                    resolvedItems = await resolveNamesViaDemoBatch(resolvedItems);
+                    setWishlist(resolvedItems.map((item) => ({ ...item })));
+                }
+                // Third pass: if placeholders still remain, wait 2s and retry resolveNamesBatch
+                // to give Steam's rate limiter time to reset.
+                const stillMissing2 = resolvedItems.filter(isPlaceholderName);
+                if (stillMissing2.length > 0) {
+                    console.log(`[Demo Finder] ${stillMissing2.length} placeholder(s) remain after demo-batch — retrying resolveNamesBatch in 2s`);
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    resolvedItems = await resolveItemNames(resolvedItems);
+                    setWishlist(resolvedItems.map((item) => ({ ...item })));
+                }
             }
             finally {
                 setResolvingNames(false);
@@ -405,9 +455,8 @@ function Content() {
                     if (idx !== -1) {
                         const demoResult = results[appidStr];
                         // Update game name from appdetails if current name is a placeholder
-                        const currentName = updatedWishlist[idx].name;
                         const resolvedName = demoResult.name;
-                        if (resolvedName && (!currentName || currentName.startsWith("App ") || currentName === "Unknown")) {
+                        if (resolvedName && isPlaceholderName(updatedWishlist[idx])) {
                             updatedWishlist[idx] = { ...updatedWishlist[idx], name: resolvedName, demoInfo: demoResult };
                         }
                         else {
