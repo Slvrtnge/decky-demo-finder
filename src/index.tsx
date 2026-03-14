@@ -10,6 +10,7 @@ import {
   callable,
   definePlugin,
   toaster,
+  fetchNoCors,
 } from "@decky/api";
 import { useState, useEffect, useCallback, Fragment, FC } from "react";
 import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt } from "react-icons/fa";
@@ -88,6 +89,38 @@ function getSteamId(): string {
   return "";
 }
 
+/**
+ * Frontend fallback: fetch wishlist via fetchNoCors (Decky proxy).
+ * Uses IWishlistService/GetWishlist/v1 with steamid as a string.
+ */
+async function fetchWishlistFrontend(steamId: string): Promise<WishlistItem[]> {
+  try {
+    const inputJson = JSON.stringify({ steamid: steamId });
+    const url = `https://api.steampowered.com/IWishlistService/GetWishlist/v1/?input_json=${encodeURIComponent(inputJson)}`;
+    const resp = await fetchNoCors(url, {
+      headers: { "Accept": "application/json" },
+    });
+    if (!resp.ok) {
+      console.warn(`[Demo Finder] Frontend GetWishlist returned status ${resp.status}`);
+      return [];
+    }
+    const data = await resp.json();
+    const items = data?.response?.items;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return [];
+    }
+    return items
+      .filter((item: { appid?: number }) => item.appid != null)
+      .map((item: { appid: number; name?: string }) => ({
+        appid: item.appid,
+        name: item.name || `App ${item.appid}`,
+      }));
+  } catch (e) {
+    console.error("[Demo Finder] Frontend wishlist fetch failed:", e);
+    return [];
+  }
+}
+
 // ---- Sub-Components ----
 const DemoButton: FC<{ demoInfo: DemoInfo; gameName: string }> = ({ demoInfo, gameName }) => {
   const handleClick = () => {
@@ -151,7 +184,16 @@ function Content() {
         setLoading(false);
         return;
       }
-      const items = await getWishlist(steamId);
+
+      // Strategy 1: Backend fetch (tries multiple API endpoints)
+      let items = await getWishlist(steamId);
+
+      // Strategy 2: Frontend fallback via fetchNoCors
+      if (!items || items.length === 0) {
+        console.log("[Demo Finder] Backend returned empty, trying frontend fallback...");
+        items = await fetchWishlistFrontend(steamId);
+      }
+
       if (!items || items.length === 0) {
         setError("Wishlist is empty or could not be loaded. Ensure your wishlist privacy is set to Public in Steam Settings > Privacy Settings.");
         setWishlist([]);
