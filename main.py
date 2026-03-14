@@ -848,6 +848,10 @@ class Plugin:
         """
         Like check_demo but reuses an existing session and respects a
         concurrency semaphore for rate-limit-friendly parallelism.
+
+        Includes retry logic with exponential backoff for transient errors
+        (429 rate-limit and 5xx server errors) so that temporary Steam API
+        hiccups do not silently report "no demo".
         """
         result = {
             "has_demo": False,
@@ -857,36 +861,55 @@ class Plugin:
             "release_date": None,
             "name": None,
         }
+        max_attempts = 4
         async with semaphore:
-            try:
-                url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
-                async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
-                    if resp.status != 200:
+            url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+            for attempt in range(max_attempts):
+                try:
+                    async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                        if resp.status == 429 or resp.status >= 500:
+                            wait = 1.0 * (2 ** attempt)
+                            decky.logger.warning(
+                                f"appdetails returned {resp.status} for {appid}, "
+                                f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_attempts})"
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        if resp.status != 200:
+                            await asyncio.sleep(0.3)
+                            return result
+                        data = await resp.json(content_type=None)
+                        app_data = data.get(str(appid), {})
+                        if not app_data.get("success", False):
+                            await asyncio.sleep(0.3)
+                            return result
+                        details = app_data.get("data", {})
+
+                        # Extract the game name from appdetails
+                        name = details.get("name")
+                        if name:
+                            result["name"] = name
+
+                        rd = details.get("release_date", {})
+                        if rd and rd.get("date"):
+                            result["release_date"] = rd["date"]
+
+                        demos = details.get("demos", [])
+                        if demos and len(demos) > 0:
+                            demo_appid = demos[0].get("appid")
+                            if demo_appid:
+                                result["has_demo"] = True
+                                result["demo_appid"] = int(demo_appid)
+                                result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
+                        await asyncio.sleep(0.3)
                         return result
-                    data = await resp.json(content_type=None)
-                    app_data = data.get(str(appid), {})
-                    if not app_data.get("success", False):
-                        return result
-                    details = app_data.get("data", {})
-
-                    # Extract the game name from appdetails
-                    name = details.get("name")
-                    if name:
-                        result["name"] = name
-
-                    rd = details.get("release_date", {})
-                    if rd and rd.get("date"):
-                        result["release_date"] = rd["date"]
-
-                    demos = details.get("demos", [])
-                    if demos and len(demos) > 0:
-                        demo_appid = demos[0].get("appid")
-                        if demo_appid:
-                            result["has_demo"] = True
-                            result["demo_appid"] = int(demo_appid)
-                            result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
-            except Exception as e:
-                decky.logger.warning(f"Concurrent demo check failed for {appid}: {e}")
+                except Exception as e:
+                    decky.logger.warning(
+                        f"Concurrent demo check failed for {appid} "
+                        f"(attempt {attempt + 1}/{max_attempts}): {e}"
+                    )
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(1.0 * (2 ** attempt))
         return result
 
     async def check_demos_batch(self, appids: list) -> dict:

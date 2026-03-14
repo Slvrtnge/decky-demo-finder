@@ -168,8 +168,32 @@ let cachedOptionsCollapsed = false;
 let cachedSortBy = "alpha";
 let diskCacheLoaded = false;
 // ---- Helpers ----
-/** Persist the current module-level cached state to disk via the backend. */
+/**
+ * Persist the current module-level cached state to disk via the backend.
+ * Debounced so that rapid state changes (e.g. during scanning) coalesce
+ * into a single write instead of hammering the filesystem.
+ */
+let _persistTimer = null;
 function persistCacheToDisk() {
+    if (_persistTimer)
+        clearTimeout(_persistTimer);
+    _persistTimer = setTimeout(() => {
+        _persistTimer = null;
+        saveScanCache({
+            wishlist: cachedWishlist,
+            hasScanned: cachedHasScanned,
+            filterDemoOnly: cachedFilterDemoOnly,
+            optionsCollapsed: cachedOptionsCollapsed,
+            sortBy: cachedSortBy,
+        }).catch((e) => console.error("[Demo Finder] Failed to persist cache:", e));
+    }, 1000);
+}
+/** Flush any pending debounced persist immediately. */
+function flushPersistCacheToDisk() {
+    if (_persistTimer) {
+        clearTimeout(_persistTimer);
+        _persistTimer = null;
+    }
     saveScanCache({
         wishlist: cachedWishlist,
         hasScanned: cachedHasScanned,
@@ -418,8 +442,16 @@ function Content() {
         }
     }, []);
     // Sync component state back to module-level cache for persistence
-    SP_REACT.useEffect(() => { cachedWishlist = wishlist; }, [wishlist]);
-    SP_REACT.useEffect(() => { cachedHasScanned = hasScanned; }, [hasScanned]);
+    SP_REACT.useEffect(() => {
+        cachedWishlist = wishlist;
+        if (diskCacheLoaded)
+            persistCacheToDisk();
+    }, [wishlist]);
+    SP_REACT.useEffect(() => {
+        cachedHasScanned = hasScanned;
+        if (diskCacheLoaded)
+            persistCacheToDisk();
+    }, [hasScanned]);
     SP_REACT.useEffect(() => {
         cachedFilterDemoOnly = filterDemoOnly;
         if (diskCacheLoaded)
@@ -535,7 +567,7 @@ function Content() {
             finally {
                 setResolvingNames(false);
                 // Persist the loaded wishlist to disk (even before scanning)
-                persistCacheToDisk();
+                flushPersistCacheToDisk();
             }
         }
         catch (e) {
@@ -584,7 +616,7 @@ function Content() {
         // Persist scan results to disk so they survive restarts
         cachedWishlist = [...updatedWishlist];
         cachedHasScanned = true;
-        persistCacheToDisk();
+        flushPersistCacheToDisk();
         const demosFound = updatedWishlist.filter((item) => item.demoInfo?.has_demo).length;
         toaster.toast({
             title: "Demo Finder",
