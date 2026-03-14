@@ -129,25 +129,130 @@ class Plugin:
     _MAX_CONCURRENT_REQUESTS = 5
     _APP_LIST_FETCH_TIMEOUT = 25  # seconds — GetAppList response is ~4 MB
     _MIN_APP_LIST_SIZE = 1000  # sanity check: reject suspiciously small responses
+    # IStoreService/GetAppList/v1 pagination controls
+    _V1_MAX_RESULTS = 50000   # items per page (Steam's documented max)
+    _V1_MAX_PAGES = 200       # safety cap (~10 M apps at 50 k/page)
 
     # ---- App-name resolution ----
 
-    async def _ensure_app_names_loaded(self, session):
+    async def _ensure_app_names_loaded(self, session, api_key: str = ""):
         """
-        Populate ``_app_name_cache`` from ISteamApps/GetAppList/v2 if
-        the cache is empty or stale.  This is a single HTTP request that
-        returns every public Steam app with its name.
+        Populate ``_app_name_cache`` from the best available bulk-name endpoint.
+
+        If an API key is provided, tries ``IStoreService/GetAppList/v1`` first
+        (paginated, returns richer data with names for virtually all apps).
+        Falls back to ``ISteamApps/GetAppList/v2`` when no key is available or
+        if the v1 call fails.
         """
         now = time.time()
         if Plugin._app_name_cache and (now - Plugin._app_name_cache_time) < Plugin._APP_NAME_CACHE_TTL:
             return  # cache is fresh
 
+        if api_key:
+            try:
+                await self._load_app_names_v1(session, api_key)
+                if Plugin._app_name_cache:
+                    return  # v1 succeeded — no need to call v2
+            except Exception as e:
+                decky.logger.warning(
+                    f"IStoreService/GetAppList/v1 failed: {e} — falling back to v2"
+                )
+
+        # Fall back to ISteamApps/GetAppList/v2 (no key required)
+        await self._load_app_names_v2(session)
+
+    async def _load_app_names_v1(self, session, api_key: str) -> None:
+        """
+        Populate ``_app_name_cache`` from ``IStoreService/GetAppList/v1``.
+
+        This endpoint requires an API key and returns richer data, including
+        names for newer and unreleased games that appear blank in the v2 list.
+        It paginates via the ``last_appid`` parameter.
+        """
+        now = time.time()
+        cache: dict = {}
+        last_appid = 0
+        page_count = 0
+
+        decky.logger.info("Loading app-name cache from IStoreService/GetAppList/v1")
+        try:
+            while True:
+                url = (
+                    "https://api.steampowered.com/IStoreService/GetAppList/v1/"
+                    f"?key={api_key}&include_games=true&include_dlc=false"
+                    f"&max_results={Plugin._V1_MAX_RESULTS}&last_appid={last_appid}"
+                )
+                async with session.get(
+                    url,
+                    headers=_DEFAULT_HEADERS,
+                    timeout=aiohttp.ClientTimeout(total=Plugin._APP_LIST_FETCH_TIMEOUT),
+                ) as resp:
+                    if resp.status == 403:
+                        decky.logger.warning(
+                            "IStoreService/GetAppList/v1 returned 403 — API key may be invalid"
+                        )
+                        return
+                    if resp.status != 200:
+                        decky.logger.warning(
+                            f"IStoreService/GetAppList/v1 returned status {resp.status}"
+                        )
+                        return
+
+                    data = await resp.json(content_type=None)
+                    response = data.get("response", {})
+                    apps = response.get("apps", [])
+
+                    for app in apps:
+                        aid = app.get("appid")
+                        name = app.get("name")
+                        if aid is not None and name:
+                            cache[int(aid)] = name
+
+                    have_more = response.get("have_more_results", False)
+                    last_appid = response.get("last_appid", 0)
+                    page_count += 1
+
+                    if not have_more or not last_appid:
+                        break
+
+                    # Safety cap: at most _V1_MAX_PAGES pages
+                    if page_count >= Plugin._V1_MAX_PAGES:
+                        decky.logger.warning(
+                            f"IStoreService/GetAppList/v1: reached page cap ({Plugin._V1_MAX_PAGES}) — stopping pagination"
+                        )
+                        break
+
+        except Exception as e:
+            decky.logger.warning(f"IStoreService/GetAppList/v1 fetch failed: {e}")
+            return
+
+        if len(cache) < Plugin._MIN_APP_LIST_SIZE:
+            decky.logger.warning(
+                f"IStoreService/GetAppList/v1 returned suspiciously few entries "
+                f"({len(cache)}) — not caching"
+            )
+            return
+
+        Plugin._app_name_cache = cache
+        Plugin._app_name_cache_time = now
+        decky.logger.info(
+            f"App-name cache loaded with {len(cache)} entries "
+            f"(IStoreService/GetAppList/v1, {page_count} page(s))"
+        )
+
+    async def _load_app_names_v2(self, session) -> None:
+        """
+        Populate ``_app_name_cache`` from ``ISteamApps/GetAppList/v2`` if
+        the cache is empty or stale.  This is a single HTTP request that
+        returns every public Steam app with its name (no API key required).
+        """
+        now = time.time()
         url = "https://api.steampowered.com/ISteamApps/GetAppList/v2/"
         try:
             async with session.get(url, headers=_DEFAULT_HEADERS, timeout=aiohttp.ClientTimeout(total=Plugin._APP_LIST_FETCH_TIMEOUT)) as resp:
                 if resp.status != 200:
                     decky.logger.warning(
-                        f"GetAppList returned status {resp.status}"
+                        f"GetAppList/v2 returned status {resp.status}"
                     )
                     return
                 data = await resp.json(content_type=None)
@@ -160,16 +265,16 @@ class Plugin:
                         cache[int(aid)] = name
                 if len(cache) < Plugin._MIN_APP_LIST_SIZE:
                     decky.logger.warning(
-                        f"GetAppList returned suspiciously few entries ({len(cache)}) — not caching"
+                        f"GetAppList/v2 returned suspiciously few entries ({len(cache)}) — not caching"
                     )
                     return
                 Plugin._app_name_cache = cache
                 Plugin._app_name_cache_time = now
                 decky.logger.info(
-                    f"App-name cache loaded with {len(cache)} entries"
+                    f"App-name cache loaded with {len(cache)} entries (ISteamApps/GetAppList/v2)"
                 )
         except Exception as e:
-            decky.logger.warning(f"Failed to load app-name cache: {e}")
+            decky.logger.warning(f"Failed to load app-name cache via v2: {e}")
 
     def _apply_cached_names(self, items: list) -> None:
         """Overwrite placeholder names with real names from the cache."""
@@ -528,7 +633,7 @@ class Plugin:
             # website uses to display game names — it is the most reliable name
             # source available without individual per-game API calls.
             name_task = asyncio.ensure_future(
-                self._ensure_app_names_loaded(session)
+                self._ensure_app_names_loaded(session, api_key)
             )
             wishlistdata_names_task = asyncio.ensure_future(
                 self._fetch_names_from_wishlistdata(session, steam_id)

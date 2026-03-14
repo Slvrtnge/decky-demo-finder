@@ -104,6 +104,8 @@ const getApiKey = callable("get_api_key");
 const resolveNamesBatch = callable("resolve_names_batch");
 const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
+// Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
+const MAX_WISHLIST_PAGES = 20;
 const API_KEY_HELP_URL = "https://steamcommunity.com/dev/apikey";
 // ---- Styles ----
 const containerStyle = {
@@ -222,6 +224,49 @@ async function resolveItemNames(items) {
         console.warn("[Demo Finder] Post-load name resolution failed:", e);
         return items;
     }
+}
+/**
+ * Resolve placeholder names using Decky's fetchNoCors to call the Steam
+ * wishlistdata endpoint as the logged-in user.  This bypasses the privacy
+ * restriction that prevents the backend (which has no Steam auth cookies) from
+ * reading a Friends-Only wishlist.
+ *
+ * @param steamId - The user's 64-bit Steam ID string.
+ * @returns A mapping of appid string → name for all resolved games.
+ */
+async function resolveNamesViaWishlistData(steamId) {
+    const names = {};
+    if (!steamId)
+        return names;
+    try {
+        for (let page = 0; page <= MAX_WISHLIST_PAGES; page++) {
+            const url = `https://store.steampowered.com/wishlist/profiles/${steamId}/wishlistdata/?p=${page}`;
+            const resp = await fetchNoCors(url, { headers: { "Accept": "application/json" } });
+            if (!resp.ok) {
+                console.warn(`[Demo Finder] wishlistdata page ${page} returned status ${resp.status}`);
+                break;
+            }
+            const data = await resp.json();
+            if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).length === 0) {
+                break;
+            }
+            for (const [appidStr, info] of Object.entries(data)) {
+                if (info && typeof info === "object" && !Array.isArray(info)) {
+                    const name = info.name;
+                    if (typeof name === "string" && name) {
+                        names[appidStr] = name;
+                    }
+                }
+            }
+        }
+    }
+    catch (e) {
+        console.warn("[Demo Finder] Frontend wishlistdata name resolution failed:", e);
+    }
+    if (Object.keys(names).length > 0) {
+        console.log(`[Demo Finder] Frontend wishlistdata resolved ${Object.keys(names).length} names`);
+    }
+    return names;
 }
 /**
  * Resolve placeholder names by calling checkDemosBatch on items that still
@@ -405,7 +450,24 @@ function Content() {
             setLoading(false);
             setResolvingNames(true);
             try {
-                let resolvedItems = await resolveItemNames(items);
+                // Run resolveItemNames (backend appdetails) and resolveNamesViaWishlistData
+                // (frontend fetchNoCors to wishlistdata as logged-in user) in parallel.
+                // The wishlistdata call works even for Friends-Only wishlists since the
+                // request is made with the user's Steam session cookies via fetchNoCors.
+                const [resolvedFromBatch, wishlistDataNames] = await Promise.all([
+                    resolveItemNames(items),
+                    resolveNamesViaWishlistData(steamId),
+                ]);
+                // Merge: start from resolvedFromBatch, then apply wishlistdata names
+                // only to items that still have placeholder names.
+                let resolvedItems = resolvedFromBatch.map((item) => {
+                    if (isPlaceholderName(item)) {
+                        const wdName = wishlistDataNames[String(item.appid)];
+                        if (wdName)
+                            return { ...item, name: wdName };
+                    }
+                    return item;
+                });
                 setWishlist(resolvedItems.map((item) => ({ ...item })));
                 // Second pass: use checkDemosBatch to resolve remaining placeholders.
                 // _check_demo_shared_session already fetches appdetails and extracts
