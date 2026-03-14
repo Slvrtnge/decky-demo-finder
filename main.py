@@ -4,6 +4,7 @@ import asyncio
 import json as json_module
 import os
 import platform
+import stat
 
 
 def _build_user_agent() -> str:
@@ -46,6 +47,21 @@ def _get_settings_path() -> str:
     """Return the path to the plugin settings file."""
     settings_dir = decky.DECKY_PLUGIN_SETTINGS_DIR
     os.makedirs(settings_dir, exist_ok=True)
+    # Verify the directory is writable; attempt to fix if not.
+    if not os.access(settings_dir, os.W_OK):
+        decky.logger.warning(
+            f"Settings directory is not writable: {settings_dir} — attempting chmod"
+        )
+        try:
+            if platform.system() == "Windows":
+                current = os.stat(settings_dir).st_mode
+                os.chmod(settings_dir, current | stat.S_IWRITE)
+            else:
+                os.chmod(settings_dir, 0o755)
+        except Exception as chmod_err:
+            decky.logger.error(
+                f"Could not fix permissions on settings directory {settings_dir}: {chmod_err}"
+            )
     return os.path.join(settings_dir, "settings.json")
 
 
@@ -56,16 +72,46 @@ def _load_settings() -> dict:
         try:
             with open(path, "r") as f:
                 return json_module.load(f)
-        except Exception:
+        except Exception as e:
+            decky.logger.error(f"Failed to load settings from {path}: {e}")
             return {}
     return {}
+
+
+def _fix_readonly(path: str, is_dir: bool) -> None:
+    """Best-effort attempt to remove read-only attribute from a path.
+
+    Logs any failure but does not raise, so callers can proceed to attempt
+    the write and let that operation surface the real error if needed.
+    """
+    try:
+        if platform.system() == "Windows":
+            current = os.stat(path).st_mode
+            if not (current & stat.S_IWRITE):
+                os.chmod(path, current | stat.S_IWRITE)
+        else:
+            if not os.access(path, os.W_OK):
+                os.chmod(path, 0o755 if is_dir else 0o644)
+    except Exception as chmod_err:
+        decky.logger.error(
+            f"Could not fix read-only permissions on {path}: {chmod_err}"
+        )
 
 
 def _save_settings(settings: dict) -> None:
     """Persist settings to disk."""
     path = _get_settings_path()
-    with open(path, "w") as f:
-        json_module.dump(settings, f, indent=2)
+    settings_dir = os.path.dirname(path)
+    # Attempt to fix read-only permissions on the directory and file before writing.
+    _fix_readonly(settings_dir, is_dir=True)
+    if os.path.exists(path):
+        _fix_readonly(path, is_dir=False)
+    try:
+        with open(path, "w") as f:
+            json_module.dump(settings, f, indent=2)
+    except Exception as e:
+        decky.logger.error(f"Failed to write settings to {path}: {e}")
+        raise
 
 
 class Plugin:
@@ -79,11 +125,15 @@ class Plugin:
 
     async def set_api_key(self, api_key: str) -> bool:
         """Save the user's Steam Web API key to plugin settings."""
-        settings = _load_settings()
-        settings["steam_api_key"] = api_key.strip()
-        _save_settings(settings)
-        decky.logger.info("Steam API key saved")
-        return True
+        try:
+            settings = _load_settings()
+            settings["steam_api_key"] = api_key.strip()
+            _save_settings(settings)
+            decky.logger.info("Steam API key saved")
+            return True
+        except Exception as e:
+            decky.logger.error(f"set_api_key failed: {e}")
+            raise
 
     async def get_api_key(self) -> str:
         """Load the user's Steam Web API key from plugin settings."""
