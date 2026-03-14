@@ -127,6 +127,8 @@ class Plugin:
     _app_name_cache_time: float = 0
     _APP_NAME_CACHE_TTL = 3600  # 1 hour
     _MAX_CONCURRENT_REQUESTS = 5
+    _APP_LIST_FETCH_TIMEOUT = 25  # seconds — GetAppList response is ~4 MB
+    _MIN_APP_LIST_SIZE = 1000  # sanity check: reject suspiciously small responses
 
     # ---- App-name resolution ----
 
@@ -142,7 +144,7 @@ class Plugin:
 
         url = "https://api.steampowered.com/ISteamApps/GetAppList/v2/"
         try:
-            async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+            async with session.get(url, headers=_DEFAULT_HEADERS, timeout=aiohttp.ClientTimeout(total=Plugin._APP_LIST_FETCH_TIMEOUT)) as resp:
                 if resp.status != 200:
                     decky.logger.warning(
                         f"GetAppList returned status {resp.status}"
@@ -156,6 +158,11 @@ class Plugin:
                     name = app.get("name")
                     if aid is not None and name:
                         cache[int(aid)] = name
+                if len(cache) < Plugin._MIN_APP_LIST_SIZE:
+                    decky.logger.warning(
+                        f"GetAppList returned suspiciously few entries ({len(cache)}) — not caching"
+                    )
+                    return
                 Plugin._app_name_cache = cache
                 Plugin._app_name_cache_time = now
                 decky.logger.info(
@@ -302,7 +309,7 @@ class Plugin:
                         continue
                     results.append({
                         "appid": int(appid),
-                        "name": item.get("name", f"App {appid}"),
+                        "name": f"App {appid}",
                         "date_added": item.get("date_added", 0),
                     })
 
@@ -350,7 +357,7 @@ class Plugin:
                         continue
                     results.append({
                         "appid": int(appid),
-                        "name": item.get("name", f"App {appid}"),
+                        "name": f"App {appid}",
                         "date_added": item.get("date_added", 0),
                     })
 
@@ -490,10 +497,10 @@ class Plugin:
             # Wait for the name cache before resolving (with a timeout so a
             # slow/failing GetAppList request does not stall wishlist delivery).
             try:
-                await asyncio.wait_for(name_task, timeout=10.0)
+                await asyncio.wait_for(name_task, timeout=30.0)
             except asyncio.TimeoutError:
                 decky.logger.warning(
-                    "App-name cache load timed out after 10s — skipping GetAppList name lookup"
+                    "App-name cache load timed out after 30s — skipping GetAppList name lookup"
                 )
             except Exception as e:
                 decky.logger.warning(f"App-name cache load failed: {e}")
@@ -739,6 +746,13 @@ class Plugin:
     async def _main(self):
         self.loop = asyncio.get_event_loop()
         decky.logger.info("Demo Finder plugin loaded!")
+        # Eagerly pre-load the app-name cache so it is warm before the first
+        # wishlist request arrives.
+        try:
+            async with aiohttp.ClientSession() as session:
+                await self._ensure_app_names_loaded(session)
+        except Exception as e:
+            decky.logger.warning(f"Startup app-name cache pre-load failed: {e}")
 
     # Called when the plugin is being stopped
     async def _unload(self):

@@ -432,12 +432,12 @@ function Content() {
           setWishlist(resolvedItems.map((item) => ({ ...item })));
         }
 
-        // Third pass: if placeholders still remain, wait 2s and retry resolveNamesBatch
+        // Third pass: if placeholders still remain, wait 5s and retry resolveNamesBatch
         // to give Steam's rate limiter time to reset.
         const stillMissing2 = resolvedItems.filter(isPlaceholderName);
         if (stillMissing2.length > 0) {
-          console.log(`[Demo Finder] ${stillMissing2.length} placeholder(s) remain after demo-batch — retrying resolveNamesBatch in 2s`);
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          console.log(`[Demo Finder] ${stillMissing2.length} placeholder(s) remain after demo-batch — retrying resolveNamesBatch in 5s`);
+          await new Promise((resolve) => setTimeout(resolve, 5000));
           resolvedItems = await resolveItemNames(resolvedItems);
           setWishlist(resolvedItems.map((item) => ({ ...item })));
         }
