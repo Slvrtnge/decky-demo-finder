@@ -97,6 +97,13 @@ const helpTextStyle: React.CSSProperties = {
   padding: "4px 0", lineHeight: "1.4",
 };
 
+const focusHighlightCSS = `
+  .demo-finder-item-focus {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
+`;
+
 // ---- Persisted state (survives component unmount/remount) ----
 let cachedWishlist: WishlistItemWithDemo[] = [];
 let cachedHasScanned = false;
@@ -626,6 +633,7 @@ function Content() {
 
   return (
     <Fragment>
+      <style>{focusHighlightCSS}</style>
       <PanelSection title="Wishlist Demo Finder">
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => setOptionsCollapsed(!optionsCollapsed)}>
@@ -711,7 +719,7 @@ function Content() {
         <PanelSection title={filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`}>
           <div style={containerStyle}>
             {pagedItems.map((item) => (
-              <Focusable key={item.appid} style={itemContainerStyle}>
+              <Focusable key={item.appid} style={itemContainerStyle} focusWithinClassName="demo-finder-item-focus">
                 <div style={gameNameStyle} title={item.name}>{item.name}</div>
                 <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
                   {item.demoInfo ? (
