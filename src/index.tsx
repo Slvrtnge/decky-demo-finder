@@ -102,6 +102,10 @@ const focusHighlightCSS = `
     background: rgba(255, 255, 255, 0.1);
     border-radius: 4px;
   }
+  .demo-finder-page-btn-focus {
+    border-color: rgba(255, 255, 255, 0.6) !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+  }
 `;
 
 // ---- Persisted state (survives component unmount/remount) ----
@@ -738,14 +742,16 @@ function Content() {
           {totalPages > 1 && (
             <Focusable style={{ display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0" }}>
               <Focusable onActivate={() => setPage(Math.max(0, page - 1))}
-                style={{ ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}>
+                style={{ ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
+                focusWithinClassName="demo-finder-page-btn-focus">
                 <div onClick={() => setPage(Math.max(0, page - 1))}>◀ Prev</div>
               </Focusable>
               <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }}>
                 {page + 1} / {totalPages}
               </span>
               <Focusable onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
-                style={{ ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}>
+                style={{ ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
+                focusWithinClassName="demo-finder-page-btn-focus">
                 <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶</div>
               </Focusable>
             </Focusable>
