@@ -106,8 +106,6 @@ const checkDemosBatch = callable("check_demos_batch");
 const setApiKey = callable("set_api_key");
 const getApiKey = callable("get_api_key");
 const resolveNamesBatch = callable("resolve_names_batch");
-const saveScanCache = callable("save_scan_cache");
-const loadScanCache = callable("load_scan_cache");
 const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
@@ -164,44 +162,7 @@ const focusHighlightCSS = `
 let cachedWishlist = [];
 let cachedHasScanned = false;
 let cachedFilterDemoOnly = false;
-let cachedOptionsCollapsed = false;
-let cachedSortBy = "alpha";
-let diskCacheLoaded = false;
 // ---- Helpers ----
-/**
- * Persist the current module-level cached state to disk via the backend.
- * Debounced so that rapid state changes (e.g. during scanning) coalesce
- * into a single write instead of hammering the filesystem.
- */
-let _persistTimer = null;
-function persistCacheToDisk() {
-    if (_persistTimer)
-        clearTimeout(_persistTimer);
-    _persistTimer = setTimeout(() => {
-        _persistTimer = null;
-        saveScanCache({
-            wishlist: cachedWishlist,
-            hasScanned: cachedHasScanned,
-            filterDemoOnly: cachedFilterDemoOnly,
-            optionsCollapsed: cachedOptionsCollapsed,
-            sortBy: cachedSortBy,
-        }).catch((e) => console.error("[Demo Finder] Failed to persist cache:", e));
-    }, 1000);
-}
-/** Flush any pending debounced persist immediately. */
-function flushPersistCacheToDisk() {
-    if (_persistTimer) {
-        clearTimeout(_persistTimer);
-        _persistTimer = null;
-    }
-    saveScanCache({
-        wishlist: cachedWishlist,
-        hasScanned: cachedHasScanned,
-        filterDemoOnly: cachedFilterDemoOnly,
-        optionsCollapsed: cachedOptionsCollapsed,
-        sortBy: cachedSortBy,
-    }).catch((e) => console.error("[Demo Finder] Failed to persist cache:", e));
-}
 function getSteamId() {
     try {
         const id = window
@@ -428,8 +389,8 @@ function Content() {
     const [hasScanned, setHasScanned] = SP_REACT.useState(cachedHasScanned);
     const [hasApiKey, setHasApiKey] = SP_REACT.useState(false);
     const [showSetup, setShowSetup] = SP_REACT.useState(false);
-    const [sortBy, setSortBy] = SP_REACT.useState(cachedSortBy);
-    const [optionsCollapsed, setOptionsCollapsed] = SP_REACT.useState(cachedOptionsCollapsed);
+    const [sortBy, setSortBy] = SP_REACT.useState("alpha");
+    const [optionsCollapsed, setOptionsCollapsed] = SP_REACT.useState(false);
     const checkApiKey = SP_REACT.useCallback(async () => {
         try {
             const key = await getApiKey();
@@ -442,31 +403,9 @@ function Content() {
         }
     }, []);
     // Sync component state back to module-level cache for persistence
-    SP_REACT.useEffect(() => {
-        cachedWishlist = wishlist;
-        if (diskCacheLoaded)
-            persistCacheToDisk();
-    }, [wishlist]);
-    SP_REACT.useEffect(() => {
-        cachedHasScanned = hasScanned;
-        if (diskCacheLoaded)
-            persistCacheToDisk();
-    }, [hasScanned]);
-    SP_REACT.useEffect(() => {
-        cachedFilterDemoOnly = filterDemoOnly;
-        if (diskCacheLoaded)
-            persistCacheToDisk();
-    }, [filterDemoOnly]);
-    SP_REACT.useEffect(() => {
-        cachedOptionsCollapsed = optionsCollapsed;
-        if (diskCacheLoaded)
-            persistCacheToDisk();
-    }, [optionsCollapsed]);
-    SP_REACT.useEffect(() => {
-        cachedSortBy = sortBy;
-        if (diskCacheLoaded)
-            persistCacheToDisk();
-    }, [sortBy]);
+    SP_REACT.useEffect(() => { cachedWishlist = wishlist; }, [wishlist]);
+    SP_REACT.useEffect(() => { cachedHasScanned = hasScanned; }, [hasScanned]);
+    SP_REACT.useEffect(() => { cachedFilterDemoOnly = filterDemoOnly; }, [filterDemoOnly]);
     const loadWishlist = SP_REACT.useCallback(async () => {
         setLoading(true);
         setResolvingNames(false);
@@ -566,8 +505,6 @@ function Content() {
             }
             finally {
                 setResolvingNames(false);
-                // Persist the loaded wishlist to disk (even before scanning)
-                flushPersistCacheToDisk();
             }
         }
         catch (e) {
@@ -613,10 +550,6 @@ function Content() {
         setScanning(false);
         setHasScanned(true);
         setScanProgress("");
-        // Persist scan results to disk so they survive restarts
-        cachedWishlist = [...updatedWishlist];
-        cachedHasScanned = true;
-        flushPersistCacheToDisk();
         const demosFound = updatedWishlist.filter((item) => item.demoInfo?.has_demo).length;
         toaster.toast({
             title: "Demo Finder",
@@ -624,42 +557,16 @@ function Content() {
         });
     }, [wishlist]);
     SP_REACT.useEffect(() => {
-        const init = async () => {
-            const hasKey = await checkApiKey();
+        checkApiKey().then((hasKey) => {
             if (!hasKey) {
                 setShowSetup(true);
                 setError("Steam API key required. Please configure your key below to get started.");
             }
-            // On first ever mount, try loading persisted cache from disk
-            if (!diskCacheLoaded) {
-                diskCacheLoaded = true;
-                try {
-                    const cache = await loadScanCache();
-                    if (cache && Array.isArray(cache.wishlist) && cache.wishlist.length > 0) {
-                        cachedWishlist = cache.wishlist;
-                        cachedHasScanned = cache.hasScanned ?? false;
-                        cachedFilterDemoOnly = cache.filterDemoOnly ?? false;
-                        cachedOptionsCollapsed = cache.optionsCollapsed ?? false;
-                        cachedSortBy = cache.sortBy ?? "alpha";
-                        setWishlist(cachedWishlist);
-                        setHasScanned(cachedHasScanned);
-                        setFilterDemoOnly(cachedFilterDemoOnly);
-                        setOptionsCollapsed(cachedOptionsCollapsed);
-                        setSortBy(cachedSortBy);
-                        console.log(`[Demo Finder] Restored ${cachedWishlist.length} items from disk cache`);
-                        return; // skip auto-load — user can refresh manually
-                    }
-                }
-                catch (e) {
-                    console.warn("[Demo Finder] Failed to load disk cache:", e);
-                }
-            }
-            // Only auto-load if there is no cached data (memory or disk)
+            // Only auto-load if there is no cached data
             if (cachedWishlist.length === 0) {
                 loadWishlist();
             }
-        };
-        init();
+        });
     }, [checkApiKey, loadWishlist]);
     const handleKeySaved = () => {
         setHasApiKey(true);

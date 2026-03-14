@@ -115,41 +115,6 @@ def _save_settings(settings: dict) -> None:
         raise
 
 
-def _get_cache_path() -> str:
-    """Return the path to the scan-result cache file."""
-    settings_dir = decky.DECKY_PLUGIN_SETTINGS_DIR
-    os.makedirs(settings_dir, exist_ok=True)
-    return os.path.join(settings_dir, "scan_cache.json")
-
-
-def _load_scan_cache() -> dict:
-    """Load the persisted scan cache from disk."""
-    path = _get_cache_path()
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                return json_module.load(f)
-        except Exception as e:
-            decky.logger.error(f"Failed to load scan cache from {path}: {e}")
-            return {}
-    return {}
-
-
-def _save_scan_cache(data: dict) -> None:
-    """Persist the scan cache to disk."""
-    path = _get_cache_path()
-    settings_dir = os.path.dirname(path)
-    _fix_readonly(settings_dir, is_dir=True)
-    if os.path.exists(path):
-        _fix_readonly(path, is_dir=False)
-    try:
-        with open(path, "w") as f:
-            json_module.dump(data, f, indent=2)
-    except Exception as e:
-        decky.logger.error(f"Failed to write scan cache to {path}: {e}")
-        raise
-
-
 class Plugin:
     """
     Demo Finder - checks Steam wishlist items for available demos.
@@ -406,22 +371,6 @@ class Plugin:
         """Load the user's Steam Web API key from plugin settings."""
         settings = _load_settings()
         return settings.get("steam_api_key", "")
-
-    # ---- Scan-result persistence ----
-
-    async def save_scan_cache(self, data: dict) -> bool:
-        """Save wishlist scan results and UI preferences to disk."""
-        try:
-            _save_scan_cache(data)
-            decky.logger.info("Scan cache saved")
-            return True
-        except Exception as e:
-            decky.logger.error(f"save_scan_cache failed: {e}")
-            return False
-
-    async def load_scan_cache(self) -> dict:
-        """Load persisted wishlist scan results and UI preferences from disk."""
-        return _load_scan_cache()
 
     # ---- Wishlist fetching strategies ----
 
@@ -848,10 +797,6 @@ class Plugin:
         """
         Like check_demo but reuses an existing session and respects a
         concurrency semaphore for rate-limit-friendly parallelism.
-
-        Includes retry logic with exponential backoff for transient errors
-        (429 rate-limit and 5xx server errors) so that temporary Steam API
-        hiccups do not silently report "no demo".
         """
         result = {
             "has_demo": False,
@@ -861,55 +806,36 @@ class Plugin:
             "release_date": None,
             "name": None,
         }
-        max_attempts = 4
         async with semaphore:
-            url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
-            for attempt in range(max_attempts):
-                try:
-                    async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
-                        if resp.status == 429 or resp.status >= 500:
-                            wait = 1.0 * (2 ** attempt)
-                            decky.logger.warning(
-                                f"appdetails returned {resp.status} for {appid}, "
-                                f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_attempts})"
-                            )
-                            await asyncio.sleep(wait)
-                            continue
-                        if resp.status != 200:
-                            await asyncio.sleep(0.3)
-                            return result
-                        data = await resp.json(content_type=None)
-                        app_data = data.get(str(appid), {})
-                        if not app_data.get("success", False):
-                            await asyncio.sleep(0.3)
-                            return result
-                        details = app_data.get("data", {})
-
-                        # Extract the game name from appdetails
-                        name = details.get("name")
-                        if name:
-                            result["name"] = name
-
-                        rd = details.get("release_date", {})
-                        if rd and rd.get("date"):
-                            result["release_date"] = rd["date"]
-
-                        demos = details.get("demos", [])
-                        if demos and len(demos) > 0:
-                            demo_appid = demos[0].get("appid")
-                            if demo_appid:
-                                result["has_demo"] = True
-                                result["demo_appid"] = int(demo_appid)
-                                result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
-                        await asyncio.sleep(0.3)
+            try:
+                url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+                async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
+                    if resp.status != 200:
                         return result
-                except Exception as e:
-                    decky.logger.warning(
-                        f"Concurrent demo check failed for {appid} "
-                        f"(attempt {attempt + 1}/{max_attempts}): {e}"
-                    )
-                    if attempt < max_attempts - 1:
-                        await asyncio.sleep(1.0 * (2 ** attempt))
+                    data = await resp.json(content_type=None)
+                    app_data = data.get(str(appid), {})
+                    if not app_data.get("success", False):
+                        return result
+                    details = app_data.get("data", {})
+
+                    # Extract the game name from appdetails
+                    name = details.get("name")
+                    if name:
+                        result["name"] = name
+
+                    rd = details.get("release_date", {})
+                    if rd and rd.get("date"):
+                        result["release_date"] = rd["date"]
+
+                    demos = details.get("demos", [])
+                    if demos and len(demos) > 0:
+                        demo_appid = demos[0].get("appid")
+                        if demo_appid:
+                            result["has_demo"] = True
+                            result["demo_appid"] = int(demo_appid)
+                            result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
+            except Exception as e:
+                decky.logger.warning(f"Concurrent demo check failed for {appid}: {e}")
         return result
 
     async def check_demos_batch(self, appids: list) -> dict:
