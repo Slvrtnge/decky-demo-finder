@@ -370,6 +370,73 @@ class Plugin:
             decky.logger.warning(f"GetWishlist (no key) failed: {e}")
             return None
 
+    async def _fetch_names_from_wishlistdata(self, session, steam_id: str) -> dict:
+        """
+        Fetch game names from the store.steampowered.com wishlistdata endpoint.
+
+        This is the same endpoint that Steam's own wishlist website uses to
+        display game names, making it the most reliable name source.  Returns a
+        dict mapping appid (int) -> name (str).  Non-fatal: returns an empty
+        dict on any failure so it can safely be used as a best-effort enrichment
+        step.
+        """
+        names: dict = {}
+        page = 0
+        headers = {
+            **_DEFAULT_HEADERS,
+            "Referer": f"https://store.steampowered.com/wishlist/profiles/{steam_id}/",
+        }
+
+        try:
+            while True:
+                url = (
+                    f"https://store.steampowered.com/wishlist/profiles/"
+                    f"{steam_id}/wishlistdata/?p={page}"
+                )
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        decky.logger.warning(
+                            f"wishlistdata name fetch returned status {resp.status} (page {page})"
+                        )
+                        break
+
+                    text = await resp.text()
+                    if not text or not text.strip():
+                        break
+
+                    data = json_module.loads(text)
+
+                    # Steam returns an empty array or empty object when there
+                    # are no more pages.  A non-dict response also signals the
+                    # end of pagination.
+                    if not data or not isinstance(data, dict) or len(data) == 0:
+                        break
+
+                    for appid_str, info in data.items():
+                        try:
+                            appid = int(appid_str)
+                        except ValueError:
+                            continue
+                        if isinstance(info, dict):
+                            name = info.get("name", "")
+                            if name:
+                                names[appid] = name
+
+                    page += 1
+                    # Cap at 20 pages (~2 000 items) to prevent runaway
+                    # pagination in case Steam changes the pagination behaviour.
+                    if page > 20:
+                        break
+
+        except Exception as e:
+            decky.logger.warning(f"wishlistdata name fetch failed: {e}")
+
+        if names:
+            decky.logger.info(
+                f"wishlistdata name fetch returned {len(names)} names"
+            )
+        return names
+
     async def _fetch_wishlist_store(self, session, steam_id: str):
         """
         Last-resort fallback: legacy store.steampowered.com endpoint.
@@ -455,10 +522,16 @@ class Plugin:
         )
 
         async with aiohttp.ClientSession() as session:
-            # Pre-load the app-name cache in parallel with the wishlist fetch
-            # so name resolution is instant later.
+            # Pre-load the app-name cache and fetch names from the wishlistdata
+            # endpoint in parallel with the wishlist item fetch.  The
+            # wishlistdata endpoint is the same source that Steam's own wishlist
+            # website uses to display game names — it is the most reliable name
+            # source available without individual per-game API calls.
             name_task = asyncio.ensure_future(
                 self._ensure_app_names_loaded(session)
+            )
+            wishlistdata_names_task = asyncio.ensure_future(
+                self._fetch_names_from_wishlistdata(session, steam_id)
             )
 
             items = None
@@ -494,8 +567,8 @@ class Plugin:
                         f"Found {len(items)} wishlist items (legacy)"
                     )
 
-            # Wait for the name cache before resolving (with a timeout so a
-            # slow/failing GetAppList request does not stall wishlist delivery).
+            # Wait for both background name-fetch tasks (with timeouts so a
+            # slow/failing request does not stall wishlist delivery).
             try:
                 await asyncio.wait_for(name_task, timeout=30.0)
             except asyncio.TimeoutError:
@@ -505,9 +578,36 @@ class Plugin:
             except Exception as e:
                 decky.logger.warning(f"App-name cache load failed: {e}")
 
+            wishlistdata_names: dict = {}
+            try:
+                wishlistdata_names = await asyncio.wait_for(
+                    wishlistdata_names_task, timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                decky.logger.warning(
+                    "wishlistdata name fetch timed out after 30s"
+                )
+            except Exception as e:
+                decky.logger.warning(f"wishlistdata name fetch failed: {e}")
+
             if items:
+                # Apply names from wishlistdata first — this is the same source
+                # Steam's own wishlist website uses and is the most authoritative.
+                if wishlistdata_names:
+                    for item in items:
+                        wname = wishlistdata_names.get(item["appid"])
+                        if wname:
+                            item["name"] = wname
+                    decky.logger.info(
+                        f"Applied {len(wishlistdata_names)} names from wishlistdata"
+                    )
+
+                # Fill any remaining gaps from the GetAppList bulk cache.
                 self._apply_cached_names(items)
+
+                # Last resort: individual appdetails lookups for anything still missing.
                 await self._resolve_missing_names(session, items)
+
                 still_missing = [
                     item for item in items
                     if not item.get("name") or item["name"].startswith("App ") or item["name"] == "Unknown"
