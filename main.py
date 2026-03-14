@@ -115,6 +115,41 @@ def _save_settings(settings: dict) -> None:
         raise
 
 
+def _get_cache_path() -> str:
+    """Return the path to the scan-result cache file."""
+    settings_dir = decky.DECKY_PLUGIN_SETTINGS_DIR
+    os.makedirs(settings_dir, exist_ok=True)
+    return os.path.join(settings_dir, "scan_cache.json")
+
+
+def _load_scan_cache() -> dict:
+    """Load the persisted scan cache from disk."""
+    path = _get_cache_path()
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return json_module.load(f)
+        except Exception as e:
+            decky.logger.error(f"Failed to load scan cache from {path}: {e}")
+            return {}
+    return {}
+
+
+def _save_scan_cache(data: dict) -> None:
+    """Persist the scan cache to disk."""
+    path = _get_cache_path()
+    settings_dir = os.path.dirname(path)
+    _fix_readonly(settings_dir, is_dir=True)
+    if os.path.exists(path):
+        _fix_readonly(path, is_dir=False)
+    try:
+        with open(path, "w") as f:
+            json_module.dump(data, f, indent=2)
+    except Exception as e:
+        decky.logger.error(f"Failed to write scan cache to {path}: {e}")
+        raise
+
+
 class Plugin:
     """
     Demo Finder - checks Steam wishlist items for available demos.
@@ -371,6 +406,22 @@ class Plugin:
         """Load the user's Steam Web API key from plugin settings."""
         settings = _load_settings()
         return settings.get("steam_api_key", "")
+
+    # ---- Scan-result persistence ----
+
+    async def save_scan_cache(self, data: dict) -> bool:
+        """Save wishlist scan results and UI preferences to disk."""
+        try:
+            _save_scan_cache(data)
+            decky.logger.info("Scan cache saved")
+            return True
+        except Exception as e:
+            decky.logger.error(f"save_scan_cache failed: {e}")
+            return False
+
+    async def load_scan_cache(self) -> dict:
+        """Load persisted wishlist scan results and UI preferences from disk."""
+        return _load_scan_cache()
 
     # ---- Wishlist fetching strategies ----
 
