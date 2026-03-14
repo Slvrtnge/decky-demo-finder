@@ -13,7 +13,7 @@ import {
   toaster,
   fetchNoCors,
 } from "@decky/api";
-import { useState, useEffect, useCallback, Fragment, FC } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment, FC } from "react";
 import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey } from "react-icons/fa";
 
 // ---- Backend callables ----
@@ -178,12 +178,30 @@ const GameStoreLinkButton: FC<{ appid: number; gameName: string }> = ({ appid, g
 const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, onKeySaved }) => {
   const [keyInput, setKeyInput] = useState("");
   const [saving, setSaving] = useState(false);
+  const fieldRef = useRef<HTMLDivElement>(null);
+
+  // Read the input value from the DOM as a fallback when React state
+  // is empty.  Steam Deck's virtual keyboard may not fire onChange on
+  // paste, leaving keyInput stale while the actual <input> holds the
+  // pasted text.
+  const getInputValue = (): string => {
+    if (keyInput.trim()) return keyInput.trim();
+    try {
+      const el = fieldRef.current?.querySelector("input") as HTMLInputElement | null;
+      if (el?.value?.trim()) return el.value.trim();
+    } catch (_e) { /* ignore */ }
+    return "";
+  };
 
   const handleSave = async () => {
-    if (!keyInput.trim()) return;
+    const value = getInputValue();
+    if (!value) {
+      toaster.toast({ title: "Demo Finder", body: "Please enter an API key first." });
+      return;
+    }
     setSaving(true);
     try {
-      await setApiKey(keyInput.trim());
+      await setApiKey(value);
       toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
       setKeyInput("");
       onKeySaved();
@@ -214,15 +232,17 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         </ButtonItem>
       </PanelSectionRow>
       <PanelSectionRow>
-        <TextField
-          label="Steam Web API Key"
-          value={keyInput}
-          onChange={(e) => setKeyInput(e?.target?.value ?? "")}
-          bIsPassword={true}
-        />
+        <div ref={fieldRef}>
+          <TextField
+            label="Steam Web API Key"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e?.target?.value ?? "")}
+            bIsPassword={true}
+          />
+        </div>
       </PanelSectionRow>
       <PanelSectionRow>
-        <ButtonItem layout="below" onClick={handleSave} disabled={saving || !keyInput.trim()}>
+        <ButtonItem layout="below" onClick={handleSave} disabled={saving}>
           {saving ? "Saving..." : "Save API Key"}
         </ButtonItem>
       </PanelSectionRow>

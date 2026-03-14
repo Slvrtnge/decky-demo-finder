@@ -207,12 +207,31 @@ const GameStoreLinkButton = ({ appid, gameName }) => {
 const ApiKeySetup = ({ hasKey, onKeySaved }) => {
     const [keyInput, setKeyInput] = SP_REACT.useState("");
     const [saving, setSaving] = SP_REACT.useState(false);
+    const fieldRef = SP_REACT.useRef(null);
+    // Read the input value from the DOM as a fallback when React state
+    // is empty.  Steam Deck's virtual keyboard may not fire onChange on
+    // paste, leaving keyInput stale while the actual <input> holds the
+    // pasted text.
+    const getInputValue = () => {
+        if (keyInput.trim())
+            return keyInput.trim();
+        try {
+            const el = fieldRef.current?.querySelector("input");
+            if (el?.value?.trim())
+                return el.value.trim();
+        }
+        catch (_e) { /* ignore */ }
+        return "";
+    };
     const handleSave = async () => {
-        if (!keyInput.trim())
+        const value = getInputValue();
+        if (!value) {
+            toaster.toast({ title: "Demo Finder", body: "Please enter an API key first." });
             return;
+        }
         setSaving(true);
         try {
-            await setApiKey(keyInput.trim());
+            await setApiKey(value);
             toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
             setKeyInput("");
             onKeySaved();
@@ -229,7 +248,7 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { title: "Steam API Key Setup", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
                     ? "✅ API key is configured. You can update it below if needed."
-                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving || !keyInput.trim(), children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
+                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
 };
 // ---- Main Content ----
 function Content() {
