@@ -197,14 +197,14 @@ class Plugin:
             appid = item["appid"]
             url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
             async with semaphore:
-                for attempt in range(3):
+                for attempt in range(5):
                     try:
                         async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
                             if resp.status == 429 or resp.status >= 500:
-                                wait = 1.0 * (2 ** attempt)
+                                wait = 2.0 * (2 ** attempt)
                                 decky.logger.warning(
                                     f"appdetails returned {resp.status} for {appid}, "
-                                    f"retrying in {wait:.0f}s (attempt {attempt + 1}/3)"
+                                    f"retrying in {wait:.0f}s (attempt {attempt + 1}/5)"
                                 )
                                 await asyncio.sleep(wait)
                                 continue
@@ -223,6 +223,7 @@ class Plugin:
                             name = details.get("name")
                             if name:
                                 item["name"] = name
+                                Plugin._app_name_cache[appid] = name
                             await asyncio.sleep(0.3)
                             return
                     except Exception as e:
@@ -231,12 +232,12 @@ class Plugin:
 
         # Process in small batches with a delay between batches to avoid
         # overwhelming Steam's rate limits.
-        batch_size = 10
+        batch_size = 5
         for i in range(0, len(missing), batch_size):
             batch = missing[i:i + batch_size]
             await asyncio.gather(*[_fetch_name(item) for item in batch], return_exceptions=True)
             if i + batch_size < len(missing):
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(2.0)
 
         decky.logger.info("appdetails name resolution complete")
 
@@ -500,6 +501,15 @@ class Plugin:
             if items:
                 self._apply_cached_names(items)
                 await self._resolve_missing_names(session, items)
+                still_missing = [
+                    item for item in items
+                    if not item.get("name") or item["name"].startswith("App ") or item["name"] == "Unknown"
+                ]
+                if still_missing:
+                    decky.logger.warning(
+                        f"{len(still_missing)} wishlist item(s) still have unresolved placeholder names "
+                        "after backend resolution — frontend will retry"
+                    )
                 return items
 
         if not api_key:
@@ -666,14 +676,14 @@ class Plugin:
             async def _fetch_name(appid):
                 url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
                 async with semaphore:
-                    for attempt in range(3):
+                    for attempt in range(5):
                         try:
                             async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
                                 if resp.status == 429 or resp.status >= 500:
-                                    wait = 1.0 * (2 ** attempt)
+                                    wait = 2.0 * (2 ** attempt)
                                     decky.logger.warning(
                                         f"resolve_names_batch: status {resp.status} for {appid}, "
-                                        f"retrying in {wait:.0f}s (attempt {attempt + 1}/3)"
+                                        f"retrying in {wait:.0f}s (attempt {attempt + 1}/5)"
                                     )
                                     await asyncio.sleep(wait)
                                     continue
@@ -689,15 +699,16 @@ class Plugin:
                                     await asyncio.sleep(0.3)
                                     return str(appid), None
                                 details = app_data.get("data", {})
+                                name = details.get("name")
                                 await asyncio.sleep(0.3)
-                                return str(appid), details.get("name")
+                                return str(appid), name
                         except Exception as e:
                             decky.logger.warning(f"Name fetch failed for appid {appid}: {e}")
                             # fall through to next attempt
                     return str(appid), None
 
             # Process in small batches to avoid overwhelming Steam's rate limits.
-            batch_size = 10
+            batch_size = 5
             pairs = []
             for i in range(0, len(appids), batch_size):
                 batch = appids[i:i + batch_size]
@@ -706,7 +717,7 @@ class Plugin:
                 )
                 pairs.extend(batch_results)
                 if i + batch_size < len(appids):
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(2.0)
 
         result = {}
         for pair in pairs:
@@ -717,6 +728,10 @@ class Plugin:
             appid_str, name = pair
             if name:
                 result[appid_str] = name
+                try:
+                    Plugin._app_name_cache[int(appid_str)] = name
+                except (ValueError, TypeError):
+                    pass
 
         return result
 
