@@ -1,5 +1,3 @@
-import os
-import json
 import decky
 import aiohttp
 import asyncio
