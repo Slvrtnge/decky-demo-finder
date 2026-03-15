@@ -770,7 +770,7 @@ class Plugin:
 
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+                url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         decky.logger.error(f"Store API returned status {resp.status} for appid {appid}")
@@ -834,7 +834,7 @@ class Plugin:
             "definitive": False,
         }
         async with semaphore:
-            url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+            url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
             for attempt in range(6):
                 try:
                     async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
@@ -887,8 +887,13 @@ class Plugin:
                                 return result
                         app_data = app_entry if isinstance(app_entry, dict) else {}
                         if not app_data.get("success", False):
-                            await asyncio.sleep(0.3)
-                            return result
+                            if attempt < 5:
+                                await asyncio.sleep(self._backoff_wait(attempt))
+                                continue
+                            else:
+                                # Steam consistently says no data for this app — treat as definitive
+                                result["definitive"] = True
+                                return result
                         details = app_data.get("data", {})
 
                         # Extract the game name from appdetails
@@ -912,6 +917,8 @@ class Plugin:
                         return result
                 except Exception as e:
                     decky.logger.warning(f"Concurrent demo check failed for {appid} (attempt {attempt + 1}/6): {e}")
+                    if attempt < 5:
+                        await asyncio.sleep(self._backoff_wait(attempt))
         return result
 
     async def check_demos_batch(self, appids: list) -> dict:
