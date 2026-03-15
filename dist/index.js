@@ -16,6 +16,7 @@ if (api._version != API_VERSION) {
     console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version ${api._version}. Some features may not work.`);
 }
 const callable = api.callable;
+const routerHook = api.routerHook;
 const toaster = api.toaster;
 const fetchNoCors = api.fetchNoCors;
 const definePlugin = (fn) => {
@@ -106,6 +107,8 @@ const checkDemosBatch = callable("check_demos_batch");
 const setApiKey = callable("set_api_key");
 const getApiKey = callable("get_api_key");
 const resolveNamesBatch = callable("resolve_names_batch");
+const saveDemoCache = callable("save_demo_cache");
+const loadDemoCache = callable("load_demo_cache");
 const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
@@ -157,11 +160,91 @@ const focusHighlightCSS = `
     border-color: rgba(255, 255, 255, 0.6) !important;
     background: rgba(255, 255, 255, 0.15) !important;
   }
+  .demo-finder-card-focus {
+    outline: 2px solid rgba(100, 180, 255, 0.8) !important;
+    border-radius: 6px;
+  }
 `;
+// ---- Full-page view styles ----
+const fullPageStyle = {
+    display: "flex", flexDirection: "column",
+    width: "100%", height: "100%",
+    background: "#1b2838", color: "#fff",
+    overflow: "hidden",
+};
+const fullPageHeaderStyle = {
+    display: "flex", alignItems: "center", gap: "12px",
+    padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,0.1)",
+    flexShrink: 0, background: "rgba(0,0,0,0.3)", flexWrap: "wrap",
+};
+const fullPageTitleStyle = {
+    fontSize: "22px", fontWeight: "bold",
+    display: "flex", alignItems: "center", gap: "10px",
+    flex: 1, whiteSpace: "nowrap",
+};
+const fullPageBtnStyle = {
+    padding: "6px 14px", borderRadius: "4px",
+    border: "1px solid rgba(255,255,255,0.3)",
+    background: "rgba(255,255,255,0.12)", color: "#fff",
+    cursor: "pointer", fontSize: "13px", whiteSpace: "nowrap",
+};
+const fullPageActiveBtnStyle = {
+    ...fullPageBtnStyle,
+    background: "rgba(100,180,255,0.25)",
+    border: "1px solid rgba(100,180,255,0.6)",
+};
+const fullPageGridStyle = {
+    display: "flex", flexWrap: "wrap",
+    gap: "12px", padding: "16px 24px",
+    overflowY: "auto", flex: 1,
+    alignContent: "flex-start",
+};
+const fullPageCardStyle = {
+    width: "200px", borderRadius: "6px",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.1)",
+    overflow: "hidden", cursor: "pointer",
+    display: "flex", flexDirection: "column",
+};
+const fullPageCardImgStyle = {
+    width: "100%", height: "94px",
+    objectFit: "cover", display: "block",
+    background: "rgba(0,0,0,0.3)",
+};
+const fullPageCardBodyStyle = {
+    padding: "8px", flex: 1,
+    display: "flex", flexDirection: "column", gap: "6px",
+};
+const fullPageCardNameStyle = {
+    fontSize: "12px", fontWeight: "bold",
+    overflow: "hidden", textOverflow: "ellipsis",
+    display: "-webkit-box", WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    lineHeight: "1.3",
+};
+const fullPageDemoBadgeStyle = {
+    display: "inline-flex", alignItems: "center", gap: "4px",
+    padding: "3px 8px", borderRadius: "3px", fontSize: "10px",
+    fontWeight: "bold",
+    background: "linear-gradient(135deg, #1a9fff 0%, #0070d1 100%)",
+    color: "#fff", alignSelf: "flex-start",
+};
+const fullPageStatusStyle = {
+    textAlign: "center", padding: "32px", fontSize: "14px",
+    color: "rgba(255,255,255,0.5)", width: "100%",
+};
+const fullPagePaginationStyle = {
+    display: "flex", justifyContent: "center", alignItems: "center",
+    gap: "16px", padding: "12px", borderTop: "1px solid rgba(255,255,255,0.1)",
+    flexShrink: 0,
+};
+const FULL_PAGE_ITEMS_PER_PAGE = 24;
 // ---- Persisted state (survives component unmount/remount) ----
 let cachedWishlist = [];
 let cachedHasScanned = false;
 let cachedFilterDemoOnly = false;
+let cachedDemoResults = {};
+let cachedDemoCacheLoaded = false;
 // ---- Helpers ----
 function getSteamId() {
     try {
@@ -376,6 +459,130 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
                     ? "✅ API key is configured. You can update it below if needed."
                     : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
 };
+// ---- Full-Page Wishlist with Demo Integration ----
+const FullPageWishlistWithDemos = () => {
+    const [wishlist, setWishlist] = SP_REACT.useState(cachedWishlist);
+    const [hasScanned, setHasScanned] = SP_REACT.useState(cachedHasScanned);
+    const [filterDemoOnly, setFilterDemoOnly] = SP_REACT.useState(cachedFilterDemoOnly);
+    const [scanning, setScanning] = SP_REACT.useState(false);
+    const [scanProgress, setScanProgress] = SP_REACT.useState("");
+    const [sortBy, setSortBy] = SP_REACT.useState("alpha");
+    const [page, setPage] = SP_REACT.useState(0);
+    // Sync back to module-level cache
+    SP_REACT.useEffect(() => { cachedWishlist = wishlist; }, [wishlist]);
+    SP_REACT.useEffect(() => { cachedHasScanned = hasScanned; }, [hasScanned]);
+    SP_REACT.useEffect(() => { cachedFilterDemoOnly = filterDemoOnly; }, [filterDemoOnly]);
+    const parseSteamDate = (d) => {
+        const ts = Date.parse(d);
+        return isNaN(ts) ? Infinity : ts;
+    };
+    const sortedFilteredItems = SP_REACT.useMemo(() => {
+        const base = filterDemoOnly
+            ? wishlist.filter((item) => item.demoInfo?.has_demo)
+            : wishlist;
+        const sorted = [...base];
+        if (sortBy === "alpha") {
+            sorted.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+        }
+        else if (sortBy === "date_added") {
+            sorted.sort((a, b) => (b.date_added ?? 0) - (a.date_added ?? 0));
+        }
+        else if (sortBy === "release_date") {
+            sorted.sort((a, b) => {
+                const da = a.demoInfo?.release_date ? parseSteamDate(a.demoInfo.release_date) : Infinity;
+                const db = b.demoInfo?.release_date ? parseSteamDate(b.demoInfo.release_date) : Infinity;
+                return da - db;
+            });
+        }
+        return sorted;
+    }, [wishlist, filterDemoOnly, sortBy]);
+    const totalPages = Math.ceil(sortedFilteredItems.length / FULL_PAGE_ITEMS_PER_PAGE);
+    const pagedItems = sortedFilteredItems.slice(page * FULL_PAGE_ITEMS_PER_PAGE, (page + 1) * FULL_PAGE_ITEMS_PER_PAGE);
+    const demosFoundCount = wishlist.filter((item) => item.demoInfo?.has_demo).length;
+    const cycleSortMode = () => {
+        setSortBy((prev) => {
+            if (prev === "alpha")
+                return "date_added";
+            if (prev === "date_added")
+                return "release_date";
+            return "alpha";
+        });
+        setPage(0);
+    };
+    const sortLabel = {
+        alpha: "A → Z",
+        date_added: "Date Added",
+        release_date: "Release Date",
+    };
+    const scanForDemos = async () => {
+        if (wishlist.length === 0)
+            return;
+        setScanning(true);
+        setPage(0);
+        const appids = wishlist.map((item) => item.appid);
+        const totalBatches = Math.ceil(appids.length / BATCH_SIZE);
+        const updatedWishlist = [...wishlist];
+        for (let i = 0; i < totalBatches; i++) {
+            const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+            setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
+            try {
+                const results = await checkDemosBatch(batch);
+                for (const appidStr of Object.keys(results)) {
+                    const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
+                    if (idx !== -1) {
+                        const demoResult = results[appidStr];
+                        const resolvedName = demoResult.name;
+                        if (resolvedName && isPlaceholderName(updatedWishlist[idx])) {
+                            updatedWishlist[idx] = { ...updatedWishlist[idx], name: resolvedName, demoInfo: demoResult };
+                        }
+                        else {
+                            updatedWishlist[idx] = { ...updatedWishlist[idx], demoInfo: demoResult };
+                        }
+                        cachedDemoResults[appidStr] = demoResult;
+                    }
+                }
+                setWishlist([...updatedWishlist]);
+            }
+            catch (e) {
+                console.error("[Demo Finder Full Page] Batch check error:", e);
+            }
+        }
+        setScanning(false);
+        setHasScanned(true);
+        setScanProgress("");
+        cachedHasScanned = true;
+        const demosFound = updatedWishlist.filter((item) => item.demoInfo?.has_demo).length;
+        if (demosFound > 0) {
+            setFilterDemoOnly(true);
+            cachedFilterDemoOnly = true;
+        }
+        toaster.toast({
+            title: "Demo Finder",
+            body: `Done! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in ${wishlist.length} games.`,
+        });
+        // Persist cache to disk
+        try {
+            await saveDemoCache(cachedDemoResults);
+        }
+        catch (e) {
+            console.warn("[Demo Finder] Failed to persist demo cache:", e);
+        }
+    };
+    const openGame = (appid, gameName) => {
+        DFL.Navigation.NavigateToExternalWeb(`https://store.steampowered.com/app/${appid}/`);
+        toaster.toast({ title: "Demo Finder", body: `Opening store page for ${gameName}` });
+    };
+    const openDemo = (demoInfo, gameName) => {
+        if (demoInfo.demo_appid) {
+            DFL.Navigation.NavigateToExternalWeb(demoInfo.demo_url || `https://store.steampowered.com/app/${demoInfo.demo_appid}/`);
+            toaster.toast({ title: "Demo Finder", body: `Opening demo for ${gameName}` });
+        }
+    };
+    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[sortBy]] }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs("div", { style: fullPageGridStyle, children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
+                                    e.currentTarget.src =
+                                        `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_231x87.jpg`;
+                                } }), SP_JSX.jsxs("div", { style: fullPageCardBodyStyle, children: [SP_JSX.jsx("div", { style: fullPageCardNameStyle, title: item.name, children: item.name }), item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DFL.Focusable, { style: { display: "contents" }, onActivate: () => { openDemo(item.demoInfo, item.name); }, children: SP_JSX.jsxs("div", { style: fullPageDemoBadgeStyle, onClick: (e) => { e.stopPropagation(); openDemo(item.demoInfo, item.name); }, children: [SP_JSX.jsx(FaGamepad, { size: 9 }), " Play Demo"] }) })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" }))) : !hasScanned ? (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.2)" }, children: "\u2014" })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" })), item.demoInfo?.release_date && (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.4)" }, children: item.demoInfo.release_date }))] })] }, item.appid)))] })), totalPages > 1 && (SP_JSX.jsxs("div", { style: fullPagePaginationStyle, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "\u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "13px" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6" }) })] }))] }));
+};
 // ---- Main Content ----
 function Content() {
     const [wishlist, setWishlist] = SP_REACT.useState(cachedWishlist);
@@ -406,11 +613,74 @@ function Content() {
     SP_REACT.useEffect(() => { cachedWishlist = wishlist; }, [wishlist]);
     SP_REACT.useEffect(() => { cachedHasScanned = hasScanned; }, [hasScanned]);
     SP_REACT.useEffect(() => { cachedFilterDemoOnly = filterDemoOnly; }, [filterDemoOnly]);
+    // Ref to the latest scanForDemos so loadWishlist can call it without stale closure
+    const scanForDemosRef = SP_REACT.useRef(null);
+    const scanForDemos = SP_REACT.useCallback(async (itemsParam) => {
+        const items = itemsParam ?? wishlist;
+        if (items.length === 0)
+            return;
+        setScanning(true);
+        setFilterDemoOnly(false);
+        setPage(0);
+        const appids = items.map((item) => item.appid);
+        const totalBatches = Math.ceil(appids.length / BATCH_SIZE);
+        const updatedWishlist = [...items];
+        for (let i = 0; i < totalBatches; i++) {
+            const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+            setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
+            try {
+                const results = await checkDemosBatch(batch);
+                for (const appidStr of Object.keys(results)) {
+                    const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
+                    if (idx !== -1) {
+                        const demoResult = results[appidStr];
+                        // Update game name from appdetails if current name is a placeholder
+                        const resolvedName = demoResult.name;
+                        if (resolvedName && isPlaceholderName(updatedWishlist[idx])) {
+                            updatedWishlist[idx] = { ...updatedWishlist[idx], name: resolvedName, demoInfo: demoResult };
+                        }
+                        else {
+                            updatedWishlist[idx] = { ...updatedWishlist[idx], demoInfo: demoResult };
+                        }
+                        cachedDemoResults[appidStr] = demoResult;
+                    }
+                }
+                setWishlist([...updatedWishlist]);
+            }
+            catch (e) {
+                console.error("Batch check error:", e);
+            }
+        }
+        setScanning(false);
+        setHasScanned(true);
+        setScanProgress("");
+        cachedHasScanned = true;
+        const demosFound = updatedWishlist.filter((item) => item.demoInfo?.has_demo).length;
+        // Auto-enable demos-only filter when demos are found
+        if (demosFound > 0) {
+            setFilterDemoOnly(true);
+            cachedFilterDemoOnly = true;
+        }
+        toaster.toast({
+            title: "Demo Finder",
+            body: `Done! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in ${items.length} games.`,
+        });
+        // Persist demo cache to disk
+        try {
+            await saveDemoCache(cachedDemoResults);
+        }
+        catch (e) {
+            console.warn("[Demo Finder] Failed to persist demo cache:", e);
+        }
+    }, [wishlist]);
+    // Keep the ref current
+    SP_REACT.useEffect(() => { scanForDemosRef.current = scanForDemos; }, [scanForDemos]);
     const loadWishlist = SP_REACT.useCallback(async () => {
         setLoading(true);
         setResolvingNames(false);
         setError(null);
         setHasScanned(false);
+        cachedHasScanned = false;
         try {
             const steamId = getSteamId();
             if (!steamId) {
@@ -464,6 +734,7 @@ function Content() {
             setPage(0);
             setLoading(false);
             setResolvingNames(true);
+            let resolvedItems = items.map((item) => ({ ...item }));
             try {
                 // Run resolveItemNames (backend appdetails) and resolveNamesViaWishlistData
                 // (frontend fetchNoCors to wishlistdata as logged-in user) in parallel.
@@ -475,7 +746,7 @@ function Content() {
                 ]);
                 // Merge: start from resolvedFromBatch, then apply wishlistdata names
                 // only to items that still have placeholder names.
-                let resolvedItems = resolvedFromBatch.map((item) => {
+                resolvedItems = resolvedFromBatch.map((item) => {
                     if (isPlaceholderName(item)) {
                         const wdName = wishlistDataNames[String(item.appid)];
                         if (wdName)
@@ -506,6 +777,28 @@ function Content() {
             finally {
                 setResolvingNames(false);
             }
+            // After wishlist is fully loaded and names are resolved:
+            // apply cached demo results (if any), otherwise auto-scan.
+            if (Object.keys(cachedDemoResults).length > 0) {
+                const withDemo = resolvedItems.map((item) => {
+                    const demoInfo = cachedDemoResults[String(item.appid)];
+                    if (demoInfo)
+                        return { ...item, demoInfo };
+                    return item;
+                });
+                setWishlist(withDemo);
+                setHasScanned(true);
+                cachedHasScanned = true;
+                const demosFound = withDemo.filter((i) => i.demoInfo?.has_demo).length;
+                if (demosFound > 0) {
+                    setFilterDemoOnly(true);
+                    cachedFilterDemoOnly = true;
+                }
+            }
+            else {
+                // No cached results — auto-scan
+                await scanForDemosRef.current?.(resolvedItems);
+            }
         }
         catch (e) {
             setError(`Failed to load wishlist: ${e}`);
@@ -513,56 +806,25 @@ function Content() {
             setResolvingNames(false);
         }
     }, [checkApiKey]);
-    const scanForDemos = SP_REACT.useCallback(async () => {
-        if (wishlist.length === 0)
-            return;
-        setScanning(true);
-        setFilterDemoOnly(false);
-        setPage(0);
-        const appids = wishlist.map((item) => item.appid);
-        const totalBatches = Math.ceil(appids.length / BATCH_SIZE);
-        const updatedWishlist = [...wishlist];
-        for (let i = 0; i < totalBatches; i++) {
-            const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
-            setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
-            try {
-                const results = await checkDemosBatch(batch);
-                for (const appidStr of Object.keys(results)) {
-                    const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
-                    if (idx !== -1) {
-                        const demoResult = results[appidStr];
-                        // Update game name from appdetails if current name is a placeholder
-                        const resolvedName = demoResult.name;
-                        if (resolvedName && isPlaceholderName(updatedWishlist[idx])) {
-                            updatedWishlist[idx] = { ...updatedWishlist[idx], name: resolvedName, demoInfo: demoResult };
-                        }
-                        else {
-                            updatedWishlist[idx] = { ...updatedWishlist[idx], demoInfo: demoResult };
-                        }
-                    }
-                }
-                setWishlist([...updatedWishlist]);
-            }
-            catch (e) {
-                console.error("Batch check error:", e);
-            }
-        }
-        setScanning(false);
-        setHasScanned(true);
-        setScanProgress("");
-        const demosFound = updatedWishlist.filter((item) => item.demoInfo?.has_demo).length;
-        toaster.toast({
-            title: "Demo Finder",
-            body: `Done! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in ${wishlist.length} games.`,
-        });
-    }, [wishlist]);
     SP_REACT.useEffect(() => {
+        // Load cached demo results from disk (once, on first mount)
+        if (!cachedDemoCacheLoaded) {
+            cachedDemoCacheLoaded = true;
+            loadDemoCache().then((cache) => {
+                if (cache && Object.keys(cache).length > 0) {
+                    cachedDemoResults = cache;
+                    console.log(`[Demo Finder] Loaded ${Object.keys(cache).length} cached demo results from disk`);
+                }
+            }).catch((e) => {
+                console.warn("[Demo Finder] Failed to load demo cache from disk:", e);
+            });
+        }
         checkApiKey().then((hasKey) => {
             if (!hasKey) {
                 setShowSetup(true);
                 setError("Steam API key required. Please configure your key below to get started.");
             }
-            // Only auto-load if there is no cached data
+            // Only auto-load if there is no cached wishlist data
             if (cachedWishlist.length === 0) {
                 loadWishlist();
             }
@@ -619,11 +881,16 @@ function Content() {
     const totalPages = Math.ceil(displayItems.length / ITEMS_PER_PAGE);
     const pagedItems = displayItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
     const demosFoundCount = wishlist.filter((item) => item.demoInfo?.has_demo).length;
-    return (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs(DFL.PanelSection, { title: "Wishlist Demo Finder", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setOptionsCollapsed(!optionsCollapsed), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [optionsCollapsed ? SP_JSX.jsx(FaChevronDown, { size: 12 }) : SP_JSX.jsx(FaChevronUp, { size: 12 }), optionsCollapsed ? "Show Options" : "Hide Options"] }) }) }), !optionsCollapsed && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: loadWishlist, disabled: loading || scanning, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSyncAlt, { size: 14 }), loading ? "Loading..." : "Refresh Wishlist"] }) }) }), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: scanForDemos, disabled: scanning || loading, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSearch, { size: 14 }), scanning ? "Scanning..." : `Scan ${wishlist.length} Games for Demos`] }) }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: cycleSortMode, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 14 }), "Sort: ", sortLabel[sortBy]] }) }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowSetup(!showSetup), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")] }) }) })] }))] }), error && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: { ...statusStyle, color: "#ff6b6b" }, children: error }) })), showSetup && (SP_JSX.jsx(ApiKeySetup, { hasKey: hasApiKey, onKeySaved: handleKeySaved })), scanning && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: scanProgress }) })), loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Loading wishlist..." }) })), resolvingNames && !loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Resolving game names..." }) })), !loading && wishlist.length > 0 && (SP_JSX.jsxs(DFL.PanelSection, { title: filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`, children: [SP_JSX.jsx("div", { style: containerStyle, children: pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: itemContainerStyle, focusWithinClassName: "demo-finder-item-focus", children: [SP_JSX.jsx("div", { style: gameNameStyle, title: item.name, children: item.name }), SP_JSX.jsxs("div", { style: { display: "flex", gap: "4px", alignItems: "center" }, children: [item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DemoButton, { demoInfo: item.demoInfo, gameName: item.name })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" }))) : hasScanned ? (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "\u2014" })), SP_JSX.jsx(GameStoreLinkButton, { appid: item.appid, gameName: item.name })] })] }, item.appid))) }), totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "\u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6" }) })] }))] }))] }));
+    const openFullPage = () => {
+        DFL.Navigation.Navigate("/demo-finder-wishlist");
+    };
+    return (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs(DFL.PanelSection, { title: "Wishlist Demo Finder", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openFullPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaGamepad, { size: 14 }), " Open Full Wishlist View"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setOptionsCollapsed(!optionsCollapsed), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [optionsCollapsed ? SP_JSX.jsx(FaChevronDown, { size: 12 }) : SP_JSX.jsx(FaChevronUp, { size: 12 }), optionsCollapsed ? "Show Options" : "Hide Options"] }) }) }), !optionsCollapsed && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: loadWishlist, disabled: loading || scanning, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSyncAlt, { size: 14 }), loading ? "Loading..." : "Refresh Wishlist"] }) }) }), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => scanForDemos(), disabled: scanning || loading, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSearch, { size: 14 }), scanning ? "Scanning..." : hasScanned ? `Re-scan ${wishlist.length} Games` : `Scan ${wishlist.length} Games for Demos`] }) }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: cycleSortMode, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 14 }), "Sort: ", sortLabel[sortBy]] }) }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowSetup(!showSetup), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")] }) }) })] }))] }), error && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: { ...statusStyle, color: "#ff6b6b" }, children: error }) })), showSetup && (SP_JSX.jsx(ApiKeySetup, { hasKey: hasApiKey, onKeySaved: handleKeySaved })), scanning && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: scanProgress }) })), loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Loading wishlist..." }) })), resolvingNames && !loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Resolving game names..." }) })), !loading && wishlist.length > 0 && (SP_JSX.jsxs(DFL.PanelSection, { title: filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`, children: [SP_JSX.jsx("div", { style: containerStyle, children: pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: itemContainerStyle, focusWithinClassName: "demo-finder-item-focus", children: [SP_JSX.jsx("div", { style: gameNameStyle, title: item.name, children: item.name }), SP_JSX.jsxs("div", { style: { display: "flex", gap: "4px", alignItems: "center" }, children: [item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DemoButton, { demoInfo: item.demoInfo, gameName: item.name })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" }))) : hasScanned ? (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "\u2014" })), SP_JSX.jsx(GameStoreLinkButton, { appid: item.appid, gameName: item.name })] })] }, item.appid))) }), totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "\u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6" }) })] }))] }))] }));
 }
 // ---- Plugin Registration ----
 var index = definePlugin(() => {
     console.log("Demo Finder plugin initializing");
+    // Register full-page wishlist route
+    routerHook.addRoute("/demo-finder-wishlist", FullPageWishlistWithDemos, { exact: true });
     return {
         name: "Demo Finder",
         titleView: (SP_JSX.jsx("div", { className: DFL.staticClasses.Title, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [SP_JSX.jsx(FaGamepad, {}), " Demo Finder"] }) })),
@@ -631,6 +898,7 @@ var index = definePlugin(() => {
         icon: SP_JSX.jsx(FaGamepad, {}),
         onDismount() {
             console.log("Demo Finder unloading");
+            routerHook.removeRoute("/demo-finder-wishlist");
         },
     };
 });

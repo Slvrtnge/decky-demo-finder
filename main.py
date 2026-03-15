@@ -947,6 +947,38 @@ class Plugin:
 
         return result
 
+    # ---- Demo cache persistence ----
+
+    async def save_demo_cache(self, cache_data: dict) -> bool:
+        """Save demo scan results to disk."""
+        try:
+            settings_dir = decky.DECKY_PLUGIN_SETTINGS_DIR
+            os.makedirs(settings_dir, exist_ok=True)
+            cache_path = os.path.join(settings_dir, "demo_cache.json")
+            _fix_readonly(settings_dir, is_dir=True)
+            if os.path.exists(cache_path):
+                _fix_readonly(cache_path, is_dir=False)
+            with open(cache_path, "w") as f:
+                json_module.dump(cache_data, f)
+            decky.logger.info(f"Demo cache saved ({len(cache_data)} entries)")
+            return True
+        except Exception as e:
+            decky.logger.error(f"Failed to save demo cache: {e}")
+            return False
+
+    async def load_demo_cache(self) -> dict:
+        """Load cached demo scan results from disk."""
+        try:
+            cache_path = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "demo_cache.json")
+            if os.path.exists(cache_path):
+                with open(cache_path, "r") as f:
+                    data = json_module.load(f)
+                decky.logger.info(f"Demo cache loaded ({len(data)} entries)")
+                return data
+        except Exception as e:
+            decky.logger.error(f"Failed to load demo cache: {e}")
+        return {}
+
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
         self.loop = asyncio.get_event_loop()
