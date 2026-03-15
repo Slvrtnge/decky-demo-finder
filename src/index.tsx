@@ -49,7 +49,7 @@ interface WishlistItemWithDemo extends WishlistItem {
 
 type SortMode = "alpha" | "date_added" | "release_date";
 
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 25;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
 const MAX_WISHLIST_PAGES = 20;
@@ -268,6 +268,17 @@ async function fetchWishlistFrontend(steamId: string, apiKey: string): Promise<W
 /** Returns true if the item has a placeholder name that still needs resolving. */
 function isPlaceholderName(item: WishlistItem): boolean {
   return !item.name || item.name.startsWith("App ") || item.name === "Unknown";
+}
+
+/** Wrap a promise with a timeout (in ms). Rejects with an Error on timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label = "operation"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
 }
 
 /**
@@ -564,7 +575,7 @@ const FullPageWishlistWithDemos: FC = () => {
       const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
       setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
       try {
-        const results = await checkDemosBatch(batch);
+        const results = await withTimeout(checkDemosBatch(batch), 90_000, `Batch ${i + 1}/${totalBatches}`);
         for (const appidStr of Object.keys(results)) {
           const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
           if (idx !== -1) {
@@ -850,7 +861,7 @@ function Content() {
       const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
       setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
       try {
-        const results = await checkDemosBatch(batch);
+        const results = await withTimeout(checkDemosBatch(batch), 90_000, `Batch ${i + 1}/${totalBatches}`);
         for (const appidStr of Object.keys(results)) {
           const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
           if (idx !== -1) {
