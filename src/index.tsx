@@ -153,7 +153,7 @@ const fullPageActiveBtnStyle: React.CSSProperties = {
 const fullPageGridStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-  gap: "12px", padding: "16px 24px",
+  gap: "12px", padding: "16px 24px 40px 24px",
   overflowY: "auto", flex: 1,
   minHeight: 0,
   alignContent: "start",
@@ -699,9 +699,27 @@ const FullPageWishlistWithDemos: FC = () => {
                     img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_616x353.jpg`;
                   } else if (img.src.includes("capsule_616x353.jpg")) {
                     img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_231x87.jpg`;
+                  } else {
+                    // All image URLs failed – hide the broken image and show the alt text background
+                    img.style.display = "none";
+                    const placeholder = img.parentElement?.querySelector(".img-placeholder") as HTMLElement | null;
+                    if (placeholder) placeholder.style.display = "flex";
                   }
                 }}
               />
+              <div
+                className="img-placeholder"
+                style={{
+                  display: "none", width: "100%", height: "94px",
+                  background: "linear-gradient(135deg, rgba(27,40,56,0.9) 0%, rgba(15,25,40,0.9) 100%)",
+                  alignItems: "center", justifyContent: "center",
+                  fontSize: "11px", color: "rgba(255,255,255,0.35)",
+                  textAlign: "center", padding: "8px", boxSizing: "border-box",
+                  overflow: "hidden", textOverflow: "ellipsis",
+                }}
+              >
+                <FaGamepad size={20} style={{ opacity: 0.3 }} />
+              </div>
               <div style={fullPageCardBodyStyle}>
                 <div style={fullPageCardNameStyle} title={item.name}>{item.name}</div>
                 {item.demoInfo ? (
@@ -1198,7 +1216,7 @@ function Content() {
           </div>
 
           {totalPages > 1 && (
-            <Focusable style={{ display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0" }}>
+            <Focusable style={{ display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0 40px 0" }}>
               <Focusable onActivate={() => setPage(Math.max(0, page - 1))}
                 style={{ ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
                 focusWithinClassName="demo-finder-page-btn-focus">
