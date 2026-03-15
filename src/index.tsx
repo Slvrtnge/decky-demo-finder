@@ -40,6 +40,7 @@ interface DemoInfo {
   app_url: string;
   release_date?: string | null;
   name?: string | null;
+  definitive?: boolean;
 }
 
 interface WishlistItemWithDemo extends WishlistItem {
@@ -153,7 +154,7 @@ const fullPageActiveBtnStyle: React.CSSProperties = {
 const fullPageGridStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-  gap: "12px", padding: "16px 24px 40px 24px",
+  gap: "12px", padding: "16px 24px 12px 24px",
   overflowY: "auto", flex: 1,
   minHeight: 0,
   alignContent: "start",
@@ -201,7 +202,7 @@ const fullPageStatusStyle: React.CSSProperties = {
 
 const fullPagePaginationStyle: React.CSSProperties = {
   display: "flex", justifyContent: "center", alignItems: "center",
-  gap: "16px", padding: "24px 12px", marginTop: "8px",
+  gap: "16px", padding: "12px 12px", marginTop: "8px",
   borderTop: "1px solid rgba(255,255,255,0.1)",
   flexShrink: 0,
 };
@@ -548,7 +549,10 @@ const FullPageWishlistWithDemos: FC = () => {
     setScanning(true);
     setPage(0);
 
-    const appids = wishlist.map((item) => item.appid);
+    // On re-scan, skip appids that already have a definitive result cached
+    const appids = wishlist
+      .map((item) => item.appid)
+      .filter((appid) => !cachedDemoResults[String(appid)]?.definitive);
     const totalBatches = Math.ceil(appids.length / BATCH_SIZE);
     const updatedWishlist = [...wishlist];
 
@@ -822,7 +826,10 @@ function Content() {
     setFilterDemoOnly(false);
     setPage(0);
 
-    const appids = items.map((item) => item.appid);
+    // On re-scan, skip appids that already have a definitive result cached
+    const appids = items
+      .map((item) => item.appid)
+      .filter((appid) => !cachedDemoResults[String(appid)]?.definitive);
     const totalBatches = Math.ceil(appids.length / BATCH_SIZE);
     const updatedWishlist = [...items];
 
@@ -1216,7 +1223,7 @@ function Content() {
           </div>
 
           {totalPages > 1 && (
-            <Focusable style={{ display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0 40px 0" }}>
+            <Focusable style={{ display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0 12px 0" }}>
               <Focusable onActivate={() => setPage(Math.max(0, page - 1))}
                 style={{ ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
                 focusWithinClassName="demo-finder-page-btn-focus">
