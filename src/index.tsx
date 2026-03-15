@@ -151,14 +151,16 @@ const fullPageActiveBtnStyle: React.CSSProperties = {
 };
 
 const fullPageGridStyle: React.CSSProperties = {
-  display: "flex", flexWrap: "wrap",
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
   gap: "12px", padding: "16px 24px",
   overflowY: "auto", flex: 1,
-  alignContent: "flex-start",
+  minHeight: 0,
+  alignContent: "start",
 };
 
 const fullPageCardStyle: React.CSSProperties = {
-  width: "200px", borderRadius: "6px",
+  borderRadius: "6px",
   background: "rgba(255,255,255,0.05)",
   border: "1px solid rgba(255,255,255,0.1)",
   overflow: "hidden", cursor: "pointer",
@@ -672,7 +674,10 @@ const FullPageWishlistWithDemos: FC = () => {
           </div>
         </div>
       ) : (
-        <div style={fullPageGridStyle}>
+        <Focusable
+          style={fullPageGridStyle}
+          flow-children="grid"
+        >
           {scanning && (
             <div style={fullPageStatusStyle}>{scanProgress || "Scanning for demos..."}</div>
           )}
@@ -727,28 +732,30 @@ const FullPageWishlistWithDemos: FC = () => {
               </div>
             </Focusable>
           ))}
-        </div>
-      )}
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div style={fullPagePaginationStyle}>
-          <Focusable
-            onActivate={() => setPage(Math.max(0, page - 1))}
-            style={{ ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
-          >
-            <div onClick={() => setPage(Math.max(0, page - 1))}>◀ Prev</div>
-          </Focusable>
-          <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "13px" }}>
-            {page + 1} / {totalPages}
-          </span>
-          <Focusable
-            onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
-            style={{ ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
-          >
-            <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶</div>
-          </Focusable>
-        </div>
+          {/* Pagination inside scrollable area */}
+          {!scanning && totalPages > 1 && (
+            <Focusable
+              style={{ ...fullPagePaginationStyle, gridColumn: "1 / -1" }}
+            >
+              <Focusable
+                onActivate={() => setPage(Math.max(0, page - 1))}
+                style={{ ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
+              >
+                <div onClick={() => setPage(Math.max(0, page - 1))}>◀ Prev</div>
+              </Focusable>
+              <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "13px" }}>
+                {page + 1} / {totalPages}
+              </span>
+              <Focusable
+                onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
+                style={{ ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
+              >
+                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶</div>
+              </Focusable>
+            </Focusable>
+          )}
+        </Focusable>
       )}
     </div>
   );
