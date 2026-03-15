@@ -814,16 +814,19 @@ class Plugin:
     @staticmethod
     def _backoff_wait(attempt: int) -> float:
         """Return exponential backoff wait time with jitter for Steam API retries."""
-        return 3.0 * (2 ** attempt) + random.uniform(0.5, 3.0)
+        return min(2.0 * (2 ** attempt) + random.uniform(0.3, 1.5), 10.0)
 
     async def _check_demo_shared_session(self, session, appid: int, semaphore, rate_limit_counter=None) -> dict:
         """
         Like check_demo but reuses an existing session and respects a
         concurrency semaphore for rate-limit-friendly parallelism.
-        Retries on 429 / 5xx with exponential backoff + jitter (up to 6 attempts).
+        Retries on 429 / 5xx with exponential backoff + jitter (up to 3 attempts).
+        The semaphore is acquired only for the HTTP request and released before
+        any backoff sleep so that other items can proceed while one is waiting.
         Respects Steam's Retry-After header and detects soft rate limits (null response).
         Sets 'definitive: True' when Steam returned a confirmed success response.
         """
+        max_attempts = 3
         result = {
             "has_demo": False,
             "demo_appid": None,
@@ -834,89 +837,94 @@ class Plugin:
             "definitive": False,
         }
         req_timeout = aiohttp.ClientTimeout(total=15)
-        async with semaphore:
-            url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
-            for attempt in range(6):
+        url = f"https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english"
+
+        for attempt in range(max_attempts):
+            retry_wait = 0
+            async with semaphore:
                 try:
                     async with session.get(url, headers=_DEFAULT_HEADERS, timeout=req_timeout) as resp:
                         if resp.status == 429 or resp.status >= 500:
                             if rate_limit_counter is not None:
                                 rate_limit_counter[0] += 1
-                            if attempt < 5:
+                            if attempt < max_attempts - 1:
                                 retry_after = resp.headers.get("Retry-After")
                                 if retry_after:
                                     try:
-                                        wait = float(retry_after)
+                                        retry_wait = float(retry_after)
                                     except (ValueError, TypeError):
-                                        wait = self._backoff_wait(attempt)
+                                        retry_wait = self._backoff_wait(attempt)
                                 else:
-                                    wait = self._backoff_wait(attempt)
+                                    retry_wait = self._backoff_wait(attempt)
                                 decky.logger.warning(
                                     f"_check_demo_shared_session: status {resp.status} for {appid}, "
-                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/6)"
+                                    f"retrying in {retry_wait:.1f}s (attempt {attempt + 1}/{max_attempts})"
                                 )
-                                await asyncio.sleep(wait)
-                                continue
                             else:
                                 decky.logger.warning(
                                     f"_check_demo_shared_session: status {resp.status} for {appid}, "
                                     f"giving up after {attempt + 1} attempts"
                                 )
                                 return result
-                        if resp.status != 200:
+                        elif resp.status != 200:
                             decky.logger.warning(
                                 f"_check_demo_shared_session: unexpected status {resp.status} for {appid}"
                             )
                             await asyncio.sleep(0.3)
                             return result
-                        data = await resp.json(content_type=None)
-                        app_entry = data.get(str(appid))
-                        # Soft rate limit: Steam returns null instead of an object
-                        if app_entry is None:
-                            if attempt < 5:
-                                wait = self._backoff_wait(attempt)
-                                decky.logger.warning(
-                                    f"_check_demo_shared_session: null response for {appid} (soft rate limit), "
-                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/6)"
-                                )
-                                await asyncio.sleep(wait)
-                                continue
+                        else:
+                            data = await resp.json(content_type=None)
+                            app_entry = data.get(str(appid))
+                            # Soft rate limit: Steam returns null instead of an object
+                            if app_entry is None:
+                                if attempt < max_attempts - 1:
+                                    retry_wait = self._backoff_wait(attempt)
+                                    decky.logger.warning(
+                                        f"_check_demo_shared_session: null response for {appid} (soft rate limit), "
+                                        f"retrying in {retry_wait:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                                    )
+                                else:
+                                    decky.logger.warning(
+                                        f"_check_demo_shared_session: null response for {appid}, giving up"
+                                    )
+                                    return result
                             else:
-                                decky.logger.warning(
-                                    f"_check_demo_shared_session: null response for {appid}, giving up"
-                                )
+                                app_data = app_entry if isinstance(app_entry, dict) else {}
+                                if not app_data.get("success", False):
+                                    # Steam says no data — return non-definitive so the
+                                    # item can be re-checked on a subsequent scan.
+                                    await asyncio.sleep(0.3)
+                                    return result
+                                details = app_data.get("data", {})
+
+                                # Extract the game name from appdetails
+                                name = details.get("name")
+                                if name:
+                                    result["name"] = name
+
+                                rd = details.get("release_date", {})
+                                if rd and rd.get("date"):
+                                    result["release_date"] = rd["date"]
+
+                                demos = details.get("demos", [])
+                                if demos and len(demos) > 0:
+                                    demo_appid = demos[0].get("appid")
+                                    if demo_appid:
+                                        result["has_demo"] = True
+                                        result["demo_appid"] = int(demo_appid)
+                                        result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
+                                result["definitive"] = True
+                                await asyncio.sleep(0.3)
                                 return result
-                        app_data = app_entry if isinstance(app_entry, dict) else {}
-                        if not app_data.get("success", False):
-                            # Steam says no data — return non-definitive so the
-                            # item can be re-checked on a subsequent scan.
-                            await asyncio.sleep(0.3)
-                            return result
-                        details = app_data.get("data", {})
-
-                        # Extract the game name from appdetails
-                        name = details.get("name")
-                        if name:
-                            result["name"] = name
-
-                        rd = details.get("release_date", {})
-                        if rd and rd.get("date"):
-                            result["release_date"] = rd["date"]
-
-                        demos = details.get("demos", [])
-                        if demos and len(demos) > 0:
-                            demo_appid = demos[0].get("appid")
-                            if demo_appid:
-                                result["has_demo"] = True
-                                result["demo_appid"] = int(demo_appid)
-                                result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
-                        result["definitive"] = True
-                        await asyncio.sleep(0.3)
-                        return result
                 except Exception as e:
-                    decky.logger.warning(f"Concurrent demo check failed for {appid} (attempt {attempt + 1}/6): {e}")
-                    if attempt < 5:
-                        await asyncio.sleep(self._backoff_wait(attempt))
+                    decky.logger.warning(f"Concurrent demo check failed for {appid} (attempt {attempt + 1}/{max_attempts}): {e}")
+                    if attempt < max_attempts - 1:
+                        retry_wait = self._backoff_wait(attempt)
+
+            # Backoff sleep OUTSIDE the semaphore so other items can proceed
+            if retry_wait > 0:
+                await asyncio.sleep(retry_wait)
+
         return result
 
     async def check_demos_batch(self, appids: list) -> dict:
@@ -926,6 +934,7 @@ class Plugin:
         small sub-batches with inter-batch delays to stay within
         Steam's rate limits for consistent results.
         Drops to serial mode if more than 2 requests in a batch are rate-limited.
+        Each item has a 30-second timeout to prevent any single check from blocking.
         """
         semaphore = asyncio.Semaphore(2)
         rate_limit_counter = [0]
@@ -933,18 +942,33 @@ class Plugin:
         connector = aiohttp.TCPConnector(limit_per_host=2)
         async with aiohttp.ClientSession(connector=connector) as session:
             async def _check(aid, sem):
-                return str(aid), await self._check_demo_shared_session(
-                    session, int(aid), sem, rate_limit_counter
-                )
+                try:
+                    return str(aid), await asyncio.wait_for(
+                        self._check_demo_shared_session(
+                            session, int(aid), sem, rate_limit_counter
+                        ),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    decky.logger.warning(f"check_demos_batch: timeout for {aid}")
+                    return str(aid), {
+                        "has_demo": False,
+                        "demo_appid": None,
+                        "demo_url": None,
+                        "app_url": f"https://store.steampowered.com/app/{aid}/",
+                        "release_date": None,
+                        "name": None,
+                        "definitive": False,
+                    }
 
             batch_size = 3
             all_pairs = []
-            inter_batch_delay = 2.5
+            inter_batch_delay = 1.5
             for i in range(0, len(appids), batch_size):
                 # Adaptive concurrency: drop to serial on repeated 429s
                 if rate_limit_counter[0] > 2:
                     semaphore = asyncio.Semaphore(1)
-                    inter_batch_delay = 8.0
+                    inter_batch_delay = 4.0
                     decky.logger.warning(
                         "check_demos_batch: too many 429s, switching to serial mode"
                     )
