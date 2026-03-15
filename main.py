@@ -870,7 +870,6 @@ class Plugin:
                             decky.logger.warning(
                                 f"_check_demo_shared_session: unexpected status {resp.status} for {appid}"
                             )
-                            await asyncio.sleep(0.3)
                             return result
                         else:
                             data = await resp.json(content_type=None)
@@ -893,7 +892,6 @@ class Plugin:
                                 if not app_data.get("success", False):
                                     # Steam says no data — return non-definitive so the
                                     # item can be re-checked on a subsequent scan.
-                                    await asyncio.sleep(0.3)
                                     return result
                                 details = app_data.get("data", {})
 
@@ -914,7 +912,6 @@ class Plugin:
                                         result["demo_appid"] = int(demo_appid)
                                         result["demo_url"] = f"https://store.steampowered.com/app/{demo_appid}/"
                                 result["definitive"] = True
-                                await asyncio.sleep(0.3)
                                 return result
                 except Exception as e:
                     decky.logger.warning(f"Concurrent demo check failed for {appid} (attempt {attempt + 1}/{max_attempts}): {e}")
@@ -933,13 +930,13 @@ class Plugin:
         Uses a semaphore to limit parallel requests and processes in
         small sub-batches with inter-batch delays to stay within
         Steam's rate limits for consistent results.
-        Drops to serial mode if more than 2 requests in a batch are rate-limited.
+        Drops to serial mode if more than 5 requests in a batch are rate-limited.
         Each item has a 30-second timeout to prevent any single check from blocking.
         """
-        semaphore = asyncio.Semaphore(2)
+        semaphore = asyncio.Semaphore(8)
         rate_limit_counter = [0]
 
-        connector = aiohttp.TCPConnector(limit_per_host=2)
+        connector = aiohttp.TCPConnector(limit_per_host=8)
         async with aiohttp.ClientSession(connector=connector) as session:
             async def _check(aid, sem):
                 try:
@@ -961,14 +958,14 @@ class Plugin:
                         "definitive": False,
                     }
 
-            batch_size = 3
+            batch_size = 10
             all_pairs = []
-            inter_batch_delay = 1.5
+            inter_batch_delay = 0.3
             for i in range(0, len(appids), batch_size):
                 # Adaptive concurrency: drop to serial on repeated 429s
-                if rate_limit_counter[0] > 2:
+                if rate_limit_counter[0] > 5:
                     semaphore = asyncio.Semaphore(1)
-                    inter_batch_delay = 4.0
+                    inter_batch_delay = 3.0
                     decky.logger.warning(
                         "check_demos_batch: too many 429s, switching to serial mode"
                     )

@@ -49,7 +49,7 @@ interface WishlistItemWithDemo extends WishlistItem {
 
 type SortMode = "alpha" | "date_added" | "release_date";
 
-const BATCH_SIZE = 25;
+const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
 const MAX_WISHLIST_PAGES = 20;
@@ -575,7 +575,7 @@ const FullPageWishlistWithDemos: FC = () => {
       const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
       setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
       try {
-        const results = await withTimeout(checkDemosBatch(batch), 90_000, `Batch ${i + 1}/${totalBatches}`);
+        const results = await withTimeout(checkDemosBatch(batch), 120_000, `Batch ${i + 1}/${totalBatches}`);
         for (const appidStr of Object.keys(results)) {
           const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
           if (idx !== -1) {
@@ -861,7 +861,7 @@ function Content() {
       const batch = appids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
       setScanProgress(`Batch ${i + 1}/${totalBatches} (${batch.length} games)...`);
       try {
-        const results = await withTimeout(checkDemosBatch(batch), 90_000, `Batch ${i + 1}/${totalBatches}`);
+        const results = await withTimeout(checkDemosBatch(batch), 120_000, `Batch ${i + 1}/${totalBatches}`);
         for (const appidStr of Object.keys(results)) {
           const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
           if (idx !== -1) {
