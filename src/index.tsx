@@ -118,9 +118,11 @@ const focusHighlightCSS = `
 // ---- Full-page view styles ----
 const fullPageStyle: React.CSSProperties = {
   display: "flex", flexDirection: "column",
-  width: "100%", height: "100%",
+  width: "100%", height: "100vh",
   background: "#1b2838", color: "#fff",
   overflow: "hidden",
+  boxSizing: "border-box",
+  paddingTop: "40px",
 };
 
 const fullPageHeaderStyle: React.CSSProperties = {
@@ -686,8 +688,12 @@ const FullPageWishlistWithDemos: FC = () => {
                 alt={item.name}
                 style={fullPageCardImgStyle}
                 onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src =
-                    `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_231x87.jpg`;
+                  const img = e.currentTarget as HTMLImageElement;
+                  if (img.src.includes("header.jpg")) {
+                    img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_616x353.jpg`;
+                  } else if (img.src.includes("capsule_616x353.jpg")) {
+                    img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_231x87.jpg`;
+                  }
                 }}
               />
               <div style={fullPageCardBodyStyle}>
@@ -832,6 +838,9 @@ function Content() {
       cachedFilterDemoOnly = true;
     }
 
+    // Auto-collapse options so the demo list is immediately visible
+    setOptionsCollapsed(true);
+
     toaster.toast({
       title: "Demo Finder",
       body: `Done! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in ${items.length} games.`,
@@ -971,6 +980,7 @@ function Content() {
         if (demosFound > 0) {
           setFilterDemoOnly(true);
           cachedFilterDemoOnly = true;
+          setOptionsCollapsed(true);
         }
       } else {
         // No cached results — auto-scan

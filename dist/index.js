@@ -168,9 +168,11 @@ const focusHighlightCSS = `
 // ---- Full-page view styles ----
 const fullPageStyle = {
     display: "flex", flexDirection: "column",
-    width: "100%", height: "100%",
+    width: "100%", height: "100vh",
     background: "#1b2838", color: "#fff",
     overflow: "hidden",
+    boxSizing: "border-box",
+    paddingTop: "40px",
 };
 const fullPageHeaderStyle = {
     display: "flex", alignItems: "center", gap: "12px",
@@ -579,8 +581,13 @@ const FullPageWishlistWithDemos = () => {
         }
     };
     return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[sortBy]] }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs("div", { style: fullPageGridStyle, children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
-                                    e.currentTarget.src =
-                                        `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_231x87.jpg`;
+                                    const img = e.currentTarget;
+                                    if (img.src.includes("header.jpg")) {
+                                        img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_616x353.jpg`;
+                                    }
+                                    else if (img.src.includes("capsule_616x353.jpg")) {
+                                        img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_231x87.jpg`;
+                                    }
                                 } }), SP_JSX.jsxs("div", { style: fullPageCardBodyStyle, children: [SP_JSX.jsx("div", { style: fullPageCardNameStyle, title: item.name, children: item.name }), item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DFL.Focusable, { style: { display: "contents" }, onActivate: () => { openDemo(item.demoInfo, item.name); }, children: SP_JSX.jsxs("div", { style: fullPageDemoBadgeStyle, onClick: (e) => { e.stopPropagation(); openDemo(item.demoInfo, item.name); }, children: [SP_JSX.jsx(FaGamepad, { size: 9 }), " Play Demo"] }) })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" }))) : !hasScanned ? (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.2)" }, children: "\u2014" })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" })), item.demoInfo?.release_date && (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.4)" }, children: item.demoInfo.release_date }))] })] }, item.appid)))] })), totalPages > 1 && (SP_JSX.jsxs("div", { style: fullPagePaginationStyle, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "\u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "13px" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6" }) })] }))] }));
 };
 // ---- Main Content ----
@@ -661,6 +668,8 @@ function Content() {
             setFilterDemoOnly(true);
             cachedFilterDemoOnly = true;
         }
+        // Auto-collapse options so the demo list is immediately visible
+        setOptionsCollapsed(true);
         toaster.toast({
             title: "Demo Finder",
             body: `Done! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in ${items.length} games.`,
@@ -793,6 +802,7 @@ function Content() {
                 if (demosFound > 0) {
                     setFilterDemoOnly(true);
                     cachedFilterDemoOnly = true;
+                    setOptionsCollapsed(true);
                 }
             }
             else {
