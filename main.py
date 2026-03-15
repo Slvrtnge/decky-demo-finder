@@ -811,11 +811,16 @@ class Plugin:
 
         return result
 
+    @staticmethod
+    def _backoff_wait(attempt: int) -> float:
+        """Return exponential backoff wait time with jitter for Steam API retries."""
+        return 3.0 * (2 ** attempt) + random.uniform(0.5, 3.0)
+
     async def _check_demo_shared_session(self, session, appid: int, semaphore, rate_limit_counter=None) -> dict:
         """
         Like check_demo but reuses an existing session and respects a
         concurrency semaphore for rate-limit-friendly parallelism.
-        Retries on 429 / 5xx with exponential backoff + jitter (up to 4 attempts).
+        Retries on 429 / 5xx with exponential backoff + jitter (up to 6 attempts).
         Respects Steam's Retry-After header and detects soft rate limits (null response).
         Sets 'definitive: True' when Steam returned a confirmed success response.
         """
@@ -830,24 +835,24 @@ class Plugin:
         }
         async with semaphore:
             url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
-            for attempt in range(4):
+            for attempt in range(6):
                 try:
                     async with session.get(url, headers=_DEFAULT_HEADERS) as resp:
                         if resp.status == 429 or resp.status >= 500:
                             if rate_limit_counter is not None:
                                 rate_limit_counter[0] += 1
-                            if attempt < 3:
+                            if attempt < 5:
                                 retry_after = resp.headers.get("Retry-After")
                                 if retry_after:
                                     try:
                                         wait = float(retry_after)
                                     except (ValueError, TypeError):
-                                        wait = 2.0 * (2 ** attempt) + random.uniform(0, 2.0)
+                                        wait = self._backoff_wait(attempt)
                                 else:
-                                    wait = 2.0 * (2 ** attempt) + random.uniform(0, 2.0)
+                                    wait = self._backoff_wait(attempt)
                                 decky.logger.warning(
                                     f"_check_demo_shared_session: status {resp.status} for {appid}, "
-                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/4)"
+                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/6)"
                                 )
                                 await asyncio.sleep(wait)
                                 continue
@@ -867,11 +872,11 @@ class Plugin:
                         app_entry = data.get(str(appid))
                         # Soft rate limit: Steam returns null instead of an object
                         if app_entry is None:
-                            if attempt < 3:
-                                wait = 2.0 * (2 ** attempt) + random.uniform(0, 2.0)
+                            if attempt < 5:
+                                wait = self._backoff_wait(attempt)
                                 decky.logger.warning(
                                     f"_check_demo_shared_session: null response for {appid} (soft rate limit), "
-                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/4)"
+                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/6)"
                                 )
                                 await asyncio.sleep(wait)
                                 continue
@@ -906,7 +911,7 @@ class Plugin:
                         await asyncio.sleep(0.3)
                         return result
                 except Exception as e:
-                    decky.logger.warning(f"Concurrent demo check failed for {appid} (attempt {attempt + 1}/4): {e}")
+                    decky.logger.warning(f"Concurrent demo check failed for {appid} (attempt {attempt + 1}/6): {e}")
         return result
 
     async def check_demos_batch(self, appids: list) -> dict:
@@ -915,26 +920,26 @@ class Plugin:
         Uses a semaphore to limit parallel requests and processes in
         small sub-batches with inter-batch delays to stay within
         Steam's rate limits for consistent results.
-        Drops to serial mode if more than 3 requests in a batch are rate-limited.
+        Drops to serial mode if more than 2 requests in a batch are rate-limited.
         """
-        semaphore = asyncio.Semaphore(3)
+        semaphore = asyncio.Semaphore(2)
         rate_limit_counter = [0]
 
-        connector = aiohttp.TCPConnector(limit_per_host=3)
+        connector = aiohttp.TCPConnector(limit_per_host=2)
         async with aiohttp.ClientSession(connector=connector) as session:
             async def _check(aid, sem):
                 return str(aid), await self._check_demo_shared_session(
                     session, int(aid), sem, rate_limit_counter
                 )
 
-            batch_size = 5
+            batch_size = 3
             all_pairs = []
-            inter_batch_delay = 1.5
+            inter_batch_delay = 2.5
             for i in range(0, len(appids), batch_size):
                 # Adaptive concurrency: drop to serial on repeated 429s
-                if rate_limit_counter[0] > 3:
+                if rate_limit_counter[0] > 2:
                     semaphore = asyncio.Semaphore(1)
-                    inter_batch_delay = 5.0
+                    inter_batch_delay = 8.0
                     decky.logger.warning(
                         "check_demos_batch: too many 429s, switching to serial mode"
                     )

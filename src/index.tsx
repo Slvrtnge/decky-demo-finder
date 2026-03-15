@@ -123,12 +123,12 @@ const fullPageStyle: React.CSSProperties = {
   background: "#1b2838", color: "#fff",
   overflow: "hidden",
   boxSizing: "border-box",
-  paddingTop: "40px",
+  paddingTop: "58px",
 };
 
 const fullPageHeaderStyle: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: "12px",
-  padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,0.1)",
+  display: "flex", alignItems: "center", gap: "16px",
+  padding: "18px 24px", borderBottom: "1px solid rgba(255,255,255,0.1)",
   flexShrink: 0, background: "rgba(0,0,0,0.3)", flexWrap: "wrap",
 };
 
@@ -153,8 +153,8 @@ const fullPageActiveBtnStyle: React.CSSProperties = {
 
 const fullPageGridStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-  gap: "12px", padding: "16px 24px 12px 24px",
+  gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+  gap: "12px", padding: "16px 24px 24px 24px",
   overflowY: "auto", flex: 1,
   minHeight: 0,
   alignContent: "start",
@@ -169,7 +169,7 @@ const fullPageCardStyle: React.CSSProperties = {
 };
 
 const fullPageCardImgStyle: React.CSSProperties = {
-  width: "100%", height: "94px",
+  width: "100%", height: "100px",
   objectFit: "cover", display: "block",
   background: "rgba(0,0,0,0.3)",
 };
@@ -202,9 +202,13 @@ const fullPageStatusStyle: React.CSSProperties = {
 
 const fullPagePaginationStyle: React.CSSProperties = {
   display: "flex", justifyContent: "center", alignItems: "center",
-  gap: "16px", padding: "12px 12px", marginTop: "8px",
+  gap: "16px", padding: "16px 12px", marginTop: "12px",
   borderTop: "1px solid rgba(255,255,255,0.1)",
   flexShrink: 0,
+};
+
+const fullPageButtonGroupStyle: React.CSSProperties = {
+  display: "flex", gap: "12px", alignItems: "center",
 };
 
 const FULL_PAGE_ITEMS_PER_PAGE = 24;
@@ -635,36 +639,36 @@ const FullPageWishlistWithDemos: FC = () => {
 
         {/* Sort button */}
         {wishlist.length > 0 && (
-          <Focusable onActivate={cycleSortMode}>
-            <div style={fullPageBtnStyle} onClick={cycleSortMode}>
-              <FaSortAlphaDown size={12} style={{ marginRight: "6px" }} />
-              {sortLabel[sortBy]}
-            </div>
-          </Focusable>
-        )}
+          <Focusable style={fullPageButtonGroupStyle} flow-children="horizontal">
+            <Focusable onActivate={cycleSortMode}>
+              <div style={fullPageBtnStyle} onClick={cycleSortMode}>
+                <FaSortAlphaDown size={12} style={{ marginRight: "6px" }} />
+                {sortLabel[sortBy]}
+              </div>
+            </Focusable>
 
-        {/* Filter toggle */}
-        {hasScanned && demosFoundCount > 0 && (
-          <Focusable onActivate={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}>
-            <div
-              style={filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle}
-              onClick={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}
-            >
-              {filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})`}
-            </div>
-          </Focusable>
-        )}
+            {/* Filter toggle */}
+            {hasScanned && demosFoundCount > 0 && (
+              <Focusable onActivate={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}>
+                <div
+                  style={filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle}
+                  onClick={() => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }}
+                >
+                  {filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})`}
+                </div>
+              </Focusable>
+            )}
 
-        {/* Scan button */}
-        {wishlist.length > 0 && (
-          <Focusable onActivate={scanning ? undefined : scanForDemos}>
-            <div
-              style={{ ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }}
-              onClick={scanning ? undefined : scanForDemos}
-            >
-              <FaSearch size={12} style={{ marginRight: "6px" }} />
-              {scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`}
-            </div>
+            {/* Scan button */}
+            <Focusable onActivate={scanning ? undefined : scanForDemos}>
+              <div
+                style={{ ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }}
+                onClick={scanning ? undefined : scanForDemos}
+              >
+                <FaSearch size={12} style={{ marginRight: "6px" }} />
+                {scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`}
+              </div>
+            </Focusable>
           </Focusable>
         )}
       </div>
@@ -714,7 +718,7 @@ const FullPageWishlistWithDemos: FC = () => {
               <div
                 className="img-placeholder"
                 style={{
-                  display: "none", width: "100%", height: "94px",
+                  display: "none", width: "100%", height: "100px",
                   background: "linear-gradient(135deg, rgba(27,40,56,0.9) 0%, rgba(15,25,40,0.9) 100%)",
                   alignItems: "center", justifyContent: "center",
                   fontSize: "11px", color: "rgba(255,255,255,0.35)",

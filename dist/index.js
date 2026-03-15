@@ -172,11 +172,11 @@ const fullPageStyle = {
     background: "#1b2838", color: "#fff",
     overflow: "hidden",
     boxSizing: "border-box",
-    paddingTop: "40px",
+    paddingTop: "58px",
 };
 const fullPageHeaderStyle = {
-    display: "flex", alignItems: "center", gap: "12px",
-    padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,0.1)",
+    display: "flex", alignItems: "center", gap: "16px",
+    padding: "18px 24px", borderBottom: "1px solid rgba(255,255,255,0.1)",
     flexShrink: 0, background: "rgba(0,0,0,0.3)", flexWrap: "wrap",
 };
 const fullPageTitleStyle = {
@@ -197,8 +197,8 @@ const fullPageActiveBtnStyle = {
 };
 const fullPageGridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-    gap: "12px", padding: "16px 24px 12px 24px",
+    gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+    gap: "12px", padding: "16px 24px 24px 24px",
     overflowY: "auto", flex: 1,
     minHeight: 0,
     alignContent: "start",
@@ -211,7 +211,7 @@ const fullPageCardStyle = {
     display: "flex", flexDirection: "column",
 };
 const fullPageCardImgStyle = {
-    width: "100%", height: "94px",
+    width: "100%", height: "100px",
     objectFit: "cover", display: "block",
     background: "rgba(0,0,0,0.3)",
 };
@@ -239,9 +239,12 @@ const fullPageStatusStyle = {
 };
 const fullPagePaginationStyle = {
     display: "flex", justifyContent: "center", alignItems: "center",
-    gap: "16px", padding: "12px 12px", marginTop: "8px",
+    gap: "16px", padding: "16px 12px", marginTop: "12px",
     borderTop: "1px solid rgba(255,255,255,0.1)",
     flexShrink: 0,
+};
+const fullPageButtonGroupStyle = {
+    display: "flex", gap: "12px", alignItems: "center",
 };
 const FULL_PAGE_ITEMS_PER_PAGE = 24;
 // ---- Persisted state (survives component unmount/remount) ----
@@ -586,7 +589,7 @@ const FullPageWishlistWithDemos = () => {
             toaster.toast({ title: "Demo Finder", body: `Opening demo for ${gameName}` });
         }
     };
-    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[sortBy]] }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs(DFL.Focusable, { style: fullPageGridStyle, "flow-children": "grid", children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
+    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsxs(DFL.Focusable, { style: fullPageButtonGroupStyle, "flow-children": "horizontal", children: [SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[sortBy]] }) }), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) })] }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs(DFL.Focusable, { style: fullPageGridStyle, "flow-children": "grid", children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
                                     const img = e.currentTarget;
                                     if (img.src.includes("header.jpg")) {
                                         img.src = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/capsule_616x353.jpg`;
@@ -602,7 +605,7 @@ const FullPageWishlistWithDemos = () => {
                                             placeholder.style.display = "flex";
                                     }
                                 } }), SP_JSX.jsx("div", { className: "img-placeholder", style: {
-                                    display: "none", width: "100%", height: "94px",
+                                    display: "none", width: "100%", height: "100px",
                                     background: "linear-gradient(135deg, rgba(27,40,56,0.9) 0%, rgba(15,25,40,0.9) 100%)",
                                     alignItems: "center", justifyContent: "center",
                                     fontSize: "11px", color: "rgba(255,255,255,0.35)",
