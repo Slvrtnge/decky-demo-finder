@@ -1519,7 +1519,7 @@ function Content() {
               <ButtonItem layout="below" onClick={() => setShowSetup(!showSetup)}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
                   <FaKey size={12} />
-                  {showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")}
+                  {showSetup ? "Hide Setup" : (hasApiKey ? "Update Steam API Key" : "⚠️ Set Up Steam API Key")}
                 </div>
               </ButtonItem>
             </PanelSectionRow>
