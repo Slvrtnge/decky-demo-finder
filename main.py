@@ -5,9 +5,9 @@ import json as json_module
 import os
 import platform
 import random
-import stat
 import subprocess
 import time
+from settings import SettingsManager
 
 
 def _build_user_agent() -> str:
@@ -46,91 +46,6 @@ _DEFAULT_HEADERS = {
 }
 
 
-def _get_settings_path() -> str:
-    """Return the path to the plugin settings file."""
-    settings_dir = decky.DECKY_PLUGIN_SETTINGS_DIR
-    os.makedirs(settings_dir, exist_ok=True)
-    # Verify the directory is writable; attempt to fix if not.
-    if not os.access(settings_dir, os.W_OK):
-        decky.logger.warning(
-            f"Settings directory is not writable: {settings_dir} — attempting chmod"
-        )
-        try:
-            if platform.system() == "Windows":
-                current = os.stat(settings_dir).st_mode
-                os.chmod(settings_dir, current | stat.S_IWRITE)
-            else:
-                os.chmod(settings_dir, 0o755)
-        except Exception as chmod_err:
-            decky.logger.error(
-                f"Could not fix permissions on settings directory {settings_dir}: {chmod_err}"
-            )
-    return os.path.join(settings_dir, "settings.json")
-
-
-def _load_settings() -> dict:
-    """Load settings from disk."""
-    path = _get_settings_path()
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                return json_module.load(f)
-        except Exception as e:
-            decky.logger.error(f"Failed to load settings from {path}: {e}")
-            return {}
-    return {}
-
-
-def _fix_readonly(path: str, is_dir: bool) -> None:
-    """Best-effort attempt to remove read-only attribute from a path.
-
-    Logs any failure but does not raise, so callers can proceed to attempt
-    the write and let that operation surface the real error if needed.
-    """
-    try:
-        if platform.system() == "Windows":
-            current = os.stat(path).st_mode
-            if not (current & stat.S_IWRITE):
-                os.chmod(path, current | stat.S_IWRITE)
-        else:
-            if not os.access(path, os.W_OK):
-                os.chmod(path, 0o755 if is_dir else 0o644)
-    except Exception as chmod_err:
-        decky.logger.error(
-            f"Could not fix read-only permissions on {path}: {chmod_err}"
-        )
-
-
-def _save_settings(settings: dict) -> None:
-    """Persist settings to disk.
-
-    Uses an atomic write strategy (write to temp file then rename) so
-    that a crash mid-write does not corrupt the settings file.
-    """
-    path = _get_settings_path()
-    settings_dir = os.path.dirname(path)
-    # Ensure the directory exists (may have been removed since load).
-    os.makedirs(settings_dir, exist_ok=True)
-    # Attempt to fix read-only permissions on the directory and file before writing.
-    _fix_readonly(settings_dir, is_dir=True)
-    if os.path.exists(path):
-        _fix_readonly(path, is_dir=False)
-
-    tmp_path = path + ".tmp"
-    try:
-        with open(tmp_path, "w") as f:
-            json_module.dump(settings, f, indent=2)
-        os.replace(tmp_path, path)
-    except Exception as e:
-        # Clean up temp file on failure.
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        decky.logger.error(f"Failed to write settings to {path}: {e}")
-        raise
-
-
 class Plugin:
     """
     Demo Finder - checks Steam wishlist items for available demos.
@@ -148,9 +63,6 @@ class Plugin:
     # IStoreService/GetAppList/v1 pagination controls
     _V1_MAX_RESULTS = 50000   # items per page (Steam's documented max)
     _V1_MAX_PAGES = 200       # safety cap (~10 M apps at 50 k/page)
-
-    # SteamGridDB in-memory image URL cache: { appid (str): url (str) }
-    _sgdb_image_cache: dict = {}
 
     # ---- App-name resolution ----
 
@@ -394,13 +306,7 @@ class Plugin:
     async def set_api_key(self, api_key: str) -> bool:
         """Save the user's Steam Web API key to plugin settings."""
         try:
-            loop = asyncio.get_event_loop()
-            key = api_key.strip()
-            def _do_save() -> None:
-                settings = _load_settings()
-                settings["steam_api_key"] = key
-                _save_settings(settings)
-            await loop.run_in_executor(None, _do_save)
+            self.settings.setSetting("steam_api_key", api_key.strip())
             decky.logger.info("Steam API key saved")
             return True
         except Exception as e:
@@ -409,20 +315,12 @@ class Plugin:
 
     async def get_api_key(self) -> str:
         """Load the user's Steam Web API key from plugin settings."""
-        loop = asyncio.get_event_loop()
-        settings = await loop.run_in_executor(None, _load_settings)
-        return settings.get("steam_api_key", "")
+        return self.settings.getSetting("steam_api_key", "")
 
     async def set_sgdb_api_key(self, api_key: str) -> bool:
         """Save the user's SteamGridDB API key to plugin settings."""
         try:
-            loop = asyncio.get_event_loop()
-            key = api_key.strip()
-            def _do_save() -> None:
-                settings = _load_settings()
-                settings["sgdb_api_key"] = key
-                _save_settings(settings)
-            await loop.run_in_executor(None, _do_save)
+            self.settings.setSetting("sgdb_api_key", api_key.strip())
             decky.logger.info("SteamGridDB API key saved")
             return True
         except Exception as e:
@@ -431,9 +329,7 @@ class Plugin:
 
     async def get_sgdb_api_key(self) -> str:
         """Load the user's SteamGridDB API key from plugin settings."""
-        loop = asyncio.get_event_loop()
-        settings = await loop.run_in_executor(None, _load_settings)
-        return settings.get("sgdb_api_key", "")
+        return self.settings.getSetting("sgdb_api_key", "")
 
     async def open_url_in_browser(self, url: str) -> bool:
         """Open a URL in the system's default browser via xdg-open.
@@ -452,286 +348,6 @@ class Plugin:
         except Exception as e:
             decky.logger.error(f"open_url_in_browser failed: {e}")
             return False
-
-    async def read_clipboard(self) -> str:
-        """Read text from the system clipboard.
-
-        Tries several clipboard strategies available on Linux / SteamOS
-        so that at least one succeeds regardless of whether the session
-        is Wayland, X11, or KDE Plasma (Desktop Mode).
-
-        Strategy order:
-        1. KDE Klipper via ``qdbus`` / ``gdbus`` (works in Desktop Mode)
-        2. ``wl-paste`` with explicit text type (Wayland / Gamescope)
-        3. ``wl-paste`` primary selection (some apps put text there)
-        4. ``xclip`` / ``xsel`` clipboard and primary selections (X11)
-        5. ``xdotool``-based X selection read as last resort
-
-        Uses ``asyncio.create_subprocess_exec`` so that the event loop
-        is never blocked.
-
-        The Decky backend may not inherit the user's display-session
-        environment variables, so we detect and inject ``DISPLAY``,
-        ``WAYLAND_DISPLAY``, ``XDG_RUNTIME_DIR`` and
-        ``DBUS_SESSION_BUS_ADDRESS`` when they are missing.
-        """
-        env = self._build_clipboard_env()
-
-        # Log environment for debugging on first call
-        decky.logger.info(
-            f"read_clipboard env: DISPLAY={env.get('DISPLAY','(unset)')}, "
-            f"WAYLAND_DISPLAY={env.get('WAYLAND_DISPLAY','(unset)')}, "
-            f"XDG_RUNTIME_DIR={env.get('XDG_RUNTIME_DIR','(unset)')}, "
-            f"DBUS_SESSION_BUS_ADDRESS={env.get('DBUS_SESSION_BUS_ADDRESS','(unset)')}"
-        )
-
-        # All clipboard commands to try, in priority order.
-        # Includes both clipboard and primary selections as fallbacks.
-        commands = [
-            # KDE Klipper via qdbus (Steam Deck Desktop Mode)
-            ["qdbus", "org.kde.klipper", "/klipper", "getClipboardContents"],
-            # KDE Klipper via gdbus (alternative D-Bus client)
-            ["gdbus", "call", "--session",
-             "--dest", "org.kde.klipper",
-             "--object-path", "/klipper",
-             "--method", "org.kde.klipper.klipper.getClipboardContents"],
-            # Wayland clipboard (explicit text type)
-            ["wl-paste", "--no-newline", "--type", "text/plain"],
-            # Wayland clipboard (default type)
-            ["wl-paste", "--no-newline"],
-            # Wayland primary selection
-            ["wl-paste", "--no-newline", "--primary"],
-            # X11 clipboard selection
-            ["xclip", "-selection", "clipboard", "-o"],
-            # X11 primary selection
-            ["xclip", "-selection", "primary", "-o"],
-            # xsel clipboard
-            ["xsel", "--clipboard", "--output"],
-            # xsel primary
-            ["xsel", "--primary", "--output"],
-        ]
-
-        for cmd in commands:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env,
-                )
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=5,
-                    )
-                except asyncio.TimeoutError:
-                    try:
-                        proc.kill()
-                    except OSError:
-                        pass
-                    await proc.wait()
-                    decky.logger.debug(
-                        f"read_clipboard: {cmd[0]} timed out"
-                    )
-                    continue
-                if proc.returncode == 0:
-                    text = (stdout or b"").decode(errors="replace").strip()
-                    # gdbus wraps output in parentheses: ('value',)
-                    if cmd[0] == "gdbus" and text.startswith("('") and text.endswith("',)"):
-                        text = text[2:-3]
-                    if text:
-                        decky.logger.info(
-                            f"read_clipboard: got {len(text)} chars via {cmd[0]}"
-                        )
-                        return text
-                    decky.logger.debug(
-                        f"read_clipboard: {cmd[0]} returned empty"
-                    )
-                else:
-                    decky.logger.debug(
-                        f"read_clipboard: {cmd[0]} exited {proc.returncode}: "
-                        f"{(stderr or b'').decode(errors='replace').strip()}"
-                    )
-            except FileNotFoundError:
-                decky.logger.debug(f"read_clipboard: {cmd[0]} not found")
-                continue
-            except Exception as e:
-                decky.logger.warning(f"read_clipboard: {cmd[0]} failed: {e}")
-
-        decky.logger.warning("read_clipboard: all clipboard tools failed")
-        return ""
-
-    @staticmethod
-    def _build_clipboard_env() -> dict:
-        """Return an environment dict suitable for clipboard subprocess calls.
-
-        On SteamOS / Steam Deck the Decky backend process often lacks
-        ``DISPLAY``, ``WAYLAND_DISPLAY``, ``XDG_RUNTIME_DIR`` and
-        ``DBUS_SESSION_BUS_ADDRESS``.  We attempt to detect sensible
-        defaults so that clipboard tools can connect to the user's
-        session.
-        """
-        env = os.environ.copy()
-
-        # ---- XDG_RUNTIME_DIR ----
-        if "XDG_RUNTIME_DIR" not in env:
-            for uid in ("1000", str(os.getuid())):
-                candidate = f"/run/user/{uid}"
-                if os.path.isdir(candidate):
-                    env["XDG_RUNTIME_DIR"] = candidate
-                    break
-
-        # ---- DISPLAY (X11) ----
-        if "DISPLAY" not in env:
-            # Try to discover the active display from X11 sockets
-            x11_dir = "/tmp/.X11-unix"
-            if os.path.isdir(x11_dir):
-                try:
-                    sockets = sorted(os.listdir(x11_dir))
-                    for sock in sockets:
-                        if sock.startswith("X"):
-                            env["DISPLAY"] = f":{sock[1:]}"
-                            break
-                except OSError:
-                    pass
-            if "DISPLAY" not in env:
-                env["DISPLAY"] = ":0"
-
-        # ---- WAYLAND_DISPLAY ----
-        if "WAYLAND_DISPLAY" not in env:
-            xdg = env.get("XDG_RUNTIME_DIR", "")
-            if xdg and os.path.isdir(xdg):
-                try:
-                    for name in sorted(os.listdir(xdg)):
-                        if name.startswith("wayland-") and not name.endswith(".lock"):
-                            env["WAYLAND_DISPLAY"] = name
-                            break
-                except OSError:
-                    pass
-
-        # ---- DBUS_SESSION_BUS_ADDRESS ----
-        # Many clipboard tools (qdbus, gdbus, xclip) need the D-Bus
-        # session bus to communicate with the clipboard owner.  The
-        # Decky backend usually lacks this variable.
-        if "DBUS_SESSION_BUS_ADDRESS" not in env:
-            xdg = env.get("XDG_RUNTIME_DIR", "")
-            # Prefer the well-known bus socket path
-            if xdg:
-                bus_path = os.path.join(xdg, "bus")
-                if os.path.exists(bus_path):
-                    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
-            # Fallback: scan /proc for a running user process that
-            # has the variable (e.g. Steam, KDE, etc.)
-            if "DBUS_SESSION_BUS_ADDRESS" not in env:
-                try:
-                    target_uid = os.getuid()
-                    if target_uid == 0:
-                        target_uid = 1000  # Steam Deck default user
-                    for pid_name in os.listdir("/proc"):
-                        if not pid_name.isdigit():
-                            continue
-                        try:
-                            pid_stat = os.stat(f"/proc/{pid_name}")
-                            if pid_stat.st_uid != target_uid:
-                                continue
-                            with open(f"/proc/{pid_name}/environ", "rb") as f:
-                                environ_data = f.read()
-                            for entry in environ_data.split(b"\x00"):
-                                if entry.startswith(b"DBUS_SESSION_BUS_ADDRESS="):
-                                    val = entry.split(b"=", 1)[1].decode(errors="replace")
-                                    if val:
-                                        env["DBUS_SESSION_BUS_ADDRESS"] = val
-                                        break
-                        except (OSError, PermissionError):
-                            continue
-                        if "DBUS_SESSION_BUS_ADDRESS" in env:
-                            break
-                except Exception:
-                    pass
-
-        return env
-
-    async def fetch_sgdb_images_batch(self, appids: list) -> dict:
-        """
-        Fetch artwork URLs from SteamGridDB for a list of Steam AppIDs.
-        Returns a dict mapping appid (string) → image URL (string or None).
-        Uses an in-memory cache to avoid redundant API calls.
-        """
-        sgdb_api_key = (await self.get_sgdb_api_key()).strip()
-        if not sgdb_api_key:
-            decky.logger.warning("fetch_sgdb_images_batch: no SGDB API key configured")
-            return {}
-
-        results: dict = {}
-        to_fetch = []
-        for appid in appids:
-            key = str(appid)
-            if key in Plugin._sgdb_image_cache:
-                results[key] = Plugin._sgdb_image_cache[key]
-            else:
-                to_fetch.append(appid)
-
-        if not to_fetch:
-            return results
-
-        semaphore = asyncio.Semaphore(4)
-        headers = dict(_DEFAULT_HEADERS)
-        headers["Authorization"] = f"Bearer {sgdb_api_key}"
-
-        async def _fetch_one(appid):
-            url = f"https://www.steamgriddb.com/api/v2/grids/steam/{appid}"
-            async with semaphore:
-                for attempt in range(4):
-                    try:
-                        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                            if resp.status == 429 or resp.status >= 500:
-                                wait = min(2.0 * (2 ** attempt) + random.uniform(0, 1.0), 10.0)
-                                decky.logger.warning(
-                                    f"SGDB: status {resp.status} for {appid}, "
-                                    f"retrying in {wait:.1f}s (attempt {attempt + 1}/4)"
-                                )
-                                await asyncio.sleep(wait)
-                                continue
-                            if resp.status == 401 or resp.status == 403:
-                                decky.logger.warning(
-                                    f"SGDB: auth error {resp.status} — check your API key"
-                                )
-                                return str(appid), None
-                            if resp.status == 404:
-                                # No entry for this game on SGDB
-                                return str(appid), None
-                            if resp.status != 200:
-                                decky.logger.warning(
-                                    f"SGDB: unexpected status {resp.status} for {appid}"
-                                )
-                                return str(appid), None
-                            data = await resp.json(content_type=None)
-                            grid_data = data.get("data", [])
-                            if grid_data:
-                                url_val = grid_data[0].get("url")
-                                return str(appid), url_val
-                            return str(appid), None
-                    except Exception as e:
-                        decky.logger.warning(
-                            f"SGDB fetch failed for {appid} (attempt {attempt + 1}/4): {e}"
-                        )
-                        if attempt < 3:
-                            await asyncio.sleep(1.0 * (attempt + 1))
-                return str(appid), None
-
-        async with aiohttp.ClientSession() as session:
-            pairs = await asyncio.gather(
-                *[_fetch_one(appid) for appid in to_fetch], return_exceptions=True
-            )
-
-        for pair in pairs:
-            if isinstance(pair, Exception):
-                decky.logger.warning(f"SGDB batch task error: {pair}")
-                continue
-            appid_str, image_url = pair
-            Plugin._sgdb_image_cache[appid_str] = image_url
-            results[appid_str] = image_url
-
-        return results
 
     # ---- Wishlist fetching strategies ----
 
@@ -979,7 +595,7 @@ class Plugin:
             decky.logger.error("get_wishlist called with empty steam_id")
             return "NO_STEAM_ID"
 
-        api_key = (_load_settings()).get("steam_api_key", "")
+        api_key = self.settings.getSetting("steam_api_key", "")
 
         decky.logger.info(
             f"Fetching wishlist for Steam ID: {steam_id} "
@@ -1454,9 +1070,6 @@ class Plugin:
             settings_dir = decky.DECKY_PLUGIN_SETTINGS_DIR
             os.makedirs(settings_dir, exist_ok=True)
             cache_path = os.path.join(settings_dir, "demo_cache.json")
-            _fix_readonly(settings_dir, is_dir=True)
-            if os.path.exists(cache_path):
-                _fix_readonly(cache_path, is_dir=False)
             with open(cache_path, "w") as f:
                 json_module.dump(cache_data, f)
             decky.logger.info(f"Demo cache saved ({len(cache_data)} entries)")
@@ -1482,6 +1095,32 @@ class Plugin:
     async def _main(self):
         self.loop = asyncio.get_event_loop()
         decky.logger.info("Demo Finder plugin loaded!")
+
+        # Initialize Decky's built-in SettingsManager for reliable settings I/O.
+        self.settings = SettingsManager(
+            name="demo-finder",
+            settings_directory=decky.DECKY_PLUGIN_SETTINGS_DIR,
+        )
+
+        # Migrate any keys from the legacy settings.json (custom file I/O) so
+        # existing users don't lose their saved API keys.
+        try:
+            legacy_path = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
+            if os.path.exists(legacy_path):
+                with open(legacy_path, "r") as f:
+                    legacy = json_module.load(f)
+                migrated = False
+                for key in ("steam_api_key", "sgdb_api_key"):
+                    if legacy.get(key) and not self.settings.getSetting(key, ""):
+                        self.settings.setSetting(key, legacy[key])
+                        migrated = True
+                if migrated:
+                    decky.logger.info(
+                        "Migrated API key(s) from legacy settings.json to SettingsManager"
+                    )
+        except Exception as e:
+            decky.logger.warning(f"Legacy settings migration failed (non-fatal): {e}")
+
         # Eagerly pre-load the app-name cache so it is warm before the first
         # wishlist request arrives.
         try:

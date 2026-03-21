@@ -5,6 +5,7 @@ import {
   Navigation,
   staticClasses,
   Focusable,
+  TextField,
 } from "@decky/ui";
 import {
   callable,
@@ -14,7 +15,7 @@ import {
   routerHook,
 } from "@decky/api";
 import { useState, useEffect, useCallback, useRef, Fragment, FC, useMemo } from "react";
-import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown, FaChevronDown, FaChevronUp, FaPaste } from "react-icons/fa";
+import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown, FaChevronDown, FaChevronUp } from "react-icons/fa";
 
 // ---- Backend callables ----
 const getWishlist = callable<[steam_id: string], WishlistItem[] | string>("get_wishlist");
@@ -26,9 +27,7 @@ const saveDemoCache = callable<[cache_data: Record<string, DemoInfo>], boolean>(
 const loadDemoCache = callable<[], Record<string, DemoInfo>>("load_demo_cache");
 const setSgdbApiKey = callable<[api_key: string], boolean>("set_sgdb_api_key");
 const getSgdbApiKey = callable<[], string>("get_sgdb_api_key");
-const fetchSgdbImagesBatch = callable<[appids: number[]], Record<string, string | null>>("fetch_sgdb_images_batch");
 const openUrlInBrowser = callable<[url: string], boolean>("open_url_in_browser");
-const readClipboard = callable<[], string>("read_clipboard");
 
 // ---- Types ----
 interface WishlistItem {
@@ -227,6 +226,40 @@ let cachedSortBy: SortMode = "alpha";
 let capsuleImageCache: Record<string, string> = {};
 /** SteamGridDB artwork URLs cached in memory (appid → URL). */
 let sgdbImageCache: Record<string, string> = {};
+/** Cached SGDB API key to avoid repeated backend calls (null = not yet loaded). */
+let cachedSgdbApiKey: string | null = null;
+
+/**
+ * Fetch a single artwork image URL from SteamGridDB for a Steam AppID.
+ * Uses fetchNoCors (Decky's CORS proxy) so requests are made from the
+ * frontend, avoiding backend round-trip issues.
+ */
+async function fetchSgdbImage(appid: number): Promise<string | null> {
+  try {
+    if (cachedSgdbApiKey === null) {
+      cachedSgdbApiKey = (await getSgdbApiKey()) || "";
+    }
+    if (!cachedSgdbApiKey) return null;
+    const resp = await fetchNoCors(
+      `https://www.steamgriddb.com/api/v2/grids/steam/${appid}`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${cachedSgdbApiKey}`,
+        },
+      }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data?.success && data.data?.length > 0) {
+      return data.data[0].url as string;
+    }
+  } catch (e) {
+    console.error("[Demo Finder] SGDB fetch failed:", e);
+  }
+  return null;
+}
 
 // ---- Helpers ----
 function getSteamId(): string {
@@ -435,102 +468,17 @@ const GameStoreLinkButton: FC<{ appid: number; gameName: string }> = ({ appid, g
 // ---- API Key Setup ----
 const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, onKeySaved }) => {
   const [saving, setSaving] = useState(false);
-  const [displayMask, setDisplayMask] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  // Backing store that always holds the latest value regardless of
-  // whether React state or DOM events fired correctly.
-  const latestValueRef = useRef("");
-
-  // Attach native DOM event listeners that bypass React's synthetic
-  // event system.  Steam Deck's virtual keyboard may only fire native
-  // events, not React onChange.  We also poll periodically as a final
-  // safety net in case even native events are unreliable.
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const sync = () => {
-      const v = el.value || "";
-      latestValueRef.current = v;
-      setDisplayMask(v ? "•".repeat(Math.min(v.length, 32)) : "");
-    };
-    el.addEventListener("input", sync);
-    el.addEventListener("change", sync);
-    el.addEventListener("keyup", sync);
-    // Poll every 400ms to catch virtual-keyboard edits that fire no events.
-    const timer = setInterval(sync, 400);
-    return () => {
-      el.removeEventListener("input", sync);
-      el.removeEventListener("change", sync);
-      el.removeEventListener("keyup", sync);
-      clearInterval(timer);
-    };
-  }, []);
-
-  const getInputValue = (): string => {
-    // Primary: read directly from the DOM input element
-    const domVal = inputRef.current?.value?.trim();
-    if (domVal) return domVal;
-    // Fallback: our backing ref
-    if (latestValueRef.current.trim()) return latestValueRef.current.trim();
-    return "";
-  };
-
-  const setInputValue = (value: string) => {
-    latestValueRef.current = value;
-    const el = inputRef.current;
-    if (el) {
-      // Use native setter to guarantee the DOM value updates even if
-      // React's controlled-input logic interferes.
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype, "value"
-      )?.set;
-      if (nativeSetter) nativeSetter.call(el, value);
-      else el.value = value;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    setDisplayMask(value ? "•".repeat(Math.min(value.length, 32)) : "");
-  };
-
-  const handlePaste = async () => {
-    try {
-      let text = "";
-      let clipboardReadFailed = false;
-      try {
-        text = await navigator.clipboard.readText();
-      } catch (_e) { /* browser API unavailable on Steam Deck */ }
-      if (!text) {
-        try {
-          text = await readClipboard();
-        } catch (e) {
-          console.error("[Demo Finder] Backend clipboard read failed:", e);
-          clipboardReadFailed = true;
-        }
-      }
-      if (text?.trim()) {
-        setInputValue(text.trim());
-        toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
-      } else if (clipboardReadFailed) {
-        toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Type or paste your key using the on-screen keyboard instead." });
-      } else {
-        toaster.toast({ title: "Demo Finder", body: "Clipboard appears empty. Copy your key first, then try again." });
-      }
-    } catch (e) {
-      console.error("[Demo Finder] Clipboard paste error:", e);
-      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Type or paste your key using the on-screen keyboard instead." });
-    }
-  };
+  const [keyValue, setKeyValue] = useState("");
 
   const handleSave = async () => {
-    const value = getInputValue();
-    console.log("[Demo Finder] handleSave: value length =", value.length, "value =", value ? "(present)" : "(empty)");
+    const value = keyValue.trim();
     if (!value) {
       toaster.toast({ title: "Demo Finder", body: "Please enter an API key first." });
       return;
     }
     setSaving(true);
     try {
-      const result = await setApiKey(value);
-      console.log("[Demo Finder] setApiKey result:", result);
+      await setApiKey(value);
     } catch (e) {
       console.error("[Demo Finder] Failed to save API key:", e);
       toaster.toast({ title: "Demo Finder", body: "Failed to save API key. Please try again." });
@@ -538,7 +486,7 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
       return;
     }
     toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
-    setInputValue("");
+    setKeyValue("");
     try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
     setSaving(false);
   };
@@ -563,33 +511,12 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         </ButtonItem>
       </PanelSectionRow>
       <PanelSectionRow>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%" }}>
-          <label style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)" }}>Steam Web API Key</label>
-          <input
-            ref={inputRef}
-            type="password"
-            placeholder="Tap here and type or paste your key"
-            autoComplete="off"
-            style={{
-              width: "100%", padding: "8px 10px",
-              background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: "4px", color: "#fff", fontSize: "13px",
-              outline: "none", boxSizing: "border-box",
-            }}
-          />
-          {displayMask && (
-            <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>
-              {displayMask.length} characters entered
-            </div>
-          )}
-        </div>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={handlePaste}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-            <FaPaste size={12} /> Paste from Clipboard
-          </div>
-        </ButtonItem>
+        <TextField
+          label="Steam Web API Key"
+          value={keyValue}
+          onChange={(e) => setKeyValue(e.target.value)}
+          bIsPassword={true}
+        />
       </PanelSectionRow>
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={handleSave} disabled={saving}>
@@ -608,99 +535,27 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
 // ---- SteamGridDB API Key Setup ----
 const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, onKeySaved }) => {
   const [saving, setSaving] = useState(false);
-  const [displayMask, setDisplayMask] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const latestValueRef = useRef("");
-
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const sync = () => {
-      const v = el.value || "";
-      latestValueRef.current = v;
-      setDisplayMask(v ? "•".repeat(Math.min(v.length, 32)) : "");
-    };
-    el.addEventListener("input", sync);
-    el.addEventListener("change", sync);
-    el.addEventListener("keyup", sync);
-    const timer = setInterval(sync, 400);
-    return () => {
-      el.removeEventListener("input", sync);
-      el.removeEventListener("change", sync);
-      el.removeEventListener("keyup", sync);
-      clearInterval(timer);
-    };
-  }, []);
-
-  const getInputValue = (): string => {
-    const domVal = inputRef.current?.value?.trim();
-    if (domVal) return domVal;
-    if (latestValueRef.current.trim()) return latestValueRef.current.trim();
-    return "";
-  };
-
-  const setInputValue = (value: string) => {
-    latestValueRef.current = value;
-    const el = inputRef.current;
-    if (el) {
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype, "value"
-      )?.set;
-      if (nativeSetter) nativeSetter.call(el, value);
-      else el.value = value;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    setDisplayMask(value ? "•".repeat(Math.min(value.length, 32)) : "");
-  };
-
-  const handlePaste = async () => {
-    try {
-      let text = "";
-      let clipboardReadFailed = false;
-      try {
-        text = await navigator.clipboard.readText();
-      } catch (_e) { /* browser API unavailable on Steam Deck */ }
-      if (!text) {
-        try {
-          text = await readClipboard();
-        } catch (e) {
-          console.error("[Demo Finder] Backend clipboard read failed:", e);
-          clipboardReadFailed = true;
-        }
-      }
-      if (text?.trim()) {
-        setInputValue(text.trim());
-        toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
-      } else if (clipboardReadFailed) {
-        toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Type or paste your key using the on-screen keyboard instead." });
-      } else {
-        toaster.toast({ title: "Demo Finder", body: "Clipboard appears empty. Copy your key first, then try again." });
-      }
-    } catch (e) {
-      console.error("[Demo Finder] Clipboard paste error:", e);
-      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Type or paste your key using the on-screen keyboard instead." });
-    }
-  };
+  const [keyValue, setKeyValue] = useState("");
 
   const handleSave = async () => {
-    const value = getInputValue();
-    console.log("[Demo Finder] handleSave SGDB: value length =", value.length, "value =", value ? "(present)" : "(empty)");
+    const value = keyValue.trim();
     if (!value) {
       toaster.toast({ title: "Demo Finder", body: "Please enter a SteamGridDB API key first." });
       return;
     }
     setSaving(true);
     try {
-      const result = await setSgdbApiKey(value);
-      console.log("[Demo Finder] setSgdbApiKey result:", result);
+      await setSgdbApiKey(value);
     } catch (e) {
       console.error("[Demo Finder] Failed to save SGDB API key:", e);
       toaster.toast({ title: "Demo Finder", body: "Failed to save SteamGridDB API key. Please try again." });
       setSaving(false);
       return;
     }
+    // Invalidate the frontend SGDB key cache so the next image fetch uses the new key.
+    cachedSgdbApiKey = null;
     toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
-    setInputValue("");
+    setKeyValue("");
     try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
     setSaving(false);
   };
@@ -734,33 +589,12 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
         </ButtonItem>
       </PanelSectionRow>
       <PanelSectionRow>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", width: "100%" }}>
-          <label style={{ fontSize: "11px", color: "rgba(255,255,255,0.6)" }}>SteamGridDB API Key</label>
-          <input
-            ref={inputRef}
-            type="password"
-            placeholder="Tap here and type or paste your key"
-            autoComplete="off"
-            style={{
-              width: "100%", padding: "8px 10px",
-              background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: "4px", color: "#fff", fontSize: "13px",
-              outline: "none", boxSizing: "border-box",
-            }}
-          />
-          {displayMask && (
-            <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>
-              {displayMask.length} characters entered
-            </div>
-          )}
-        </div>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={handlePaste}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-            <FaPaste size={12} /> Paste from Clipboard
-          </div>
-        </ButtonItem>
+        <TextField
+          label="SteamGridDB API Key"
+          value={keyValue}
+          onChange={(e) => setKeyValue(e.target.value)}
+          bIsPassword={true}
+        />
       </PanelSectionRow>
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={handleSave} disabled={saving}>
@@ -1123,18 +957,14 @@ const FullPageWishlistWithDemos: FC = () => {
                     if (sgdbImageCache[appidStr]) {
                       img.src = sgdbImageCache[appidStr];
                     } else {
-                      getSgdbApiKey().then((key) => {
-                        if (!key) { showPlaceholder(); return; }
-                        fetchSgdbImagesBatch([item.appid]).then((res) => {
-                          const url = res?.[appidStr];
-                          if (url) {
-                            sgdbImageCache[appidStr] = url;
-                            img.src = url;
-                          } else {
-                            sgdbImageCache[appidStr] = "";
-                            showPlaceholder();
-                          }
-                        }).catch(() => showPlaceholder());
+                      fetchSgdbImage(item.appid).then((url) => {
+                        if (url) {
+                          sgdbImageCache[appidStr] = url;
+                          img.src = url;
+                        } else {
+                          sgdbImageCache[appidStr] = "";
+                          showPlaceholder();
+                        }
                       }).catch(() => showPlaceholder());
                     }
                   }
