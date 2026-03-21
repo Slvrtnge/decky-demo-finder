@@ -317,38 +317,6 @@ class Plugin:
         """Load the user's Steam Web API key from plugin settings."""
         return self.settings.getSetting("steam_api_key", "")
 
-    async def set_sgdb_api_key(self, api_key: str) -> bool:
-        """Save the user's SteamGridDB API key to plugin settings."""
-        try:
-            self.settings.setSetting("sgdb_api_key", api_key.strip())
-            decky.logger.info("SteamGridDB API key saved")
-            return True
-        except Exception as e:
-            decky.logger.error(f"set_sgdb_api_key failed: {e}")
-            raise
-
-    async def get_sgdb_api_key(self) -> str:
-        """Load the user's SteamGridDB API key from plugin settings."""
-        return self.settings.getSetting("sgdb_api_key", "")
-
-    async def open_url_in_browser(self, url: str) -> bool:
-        """Open a URL in the system's default browser via xdg-open.
-
-        Only allows URLs with an https scheme to prevent command injection.
-        This bypasses Steam's embedded browser which cannot handle OAuth
-        login flows (e.g. SteamGridDB's "Login via Steam" button).
-        """
-        if not url.startswith("https://"):
-            decky.logger.warning(f"open_url_in_browser: rejected non-https URL")
-            return False
-        try:
-            subprocess.Popen(["xdg-open", url])
-            decky.logger.info(f"Opened URL in system browser: {url}")
-            return True
-        except Exception as e:
-            decky.logger.error(f"open_url_in_browser failed: {e}")
-            return False
-
     # ---- Wishlist fetching strategies ----
 
     async def _fetch_wishlist_with_key(self, session, steam_id: str, api_key: str):
@@ -1110,7 +1078,7 @@ class Plugin:
                 with open(legacy_path, "r") as f:
                     legacy = json_module.load(f)
                 migrated = False
-                for key in ("steam_api_key", "sgdb_api_key"):
+                for key in ("steam_api_key",):
                     if legacy.get(key) and not self.settings.getSetting(key, ""):
                         self.settings.setSetting(key, legacy[key])
                         migrated = True

@@ -25,9 +25,7 @@ const getApiKey = callable<[], string>("get_api_key");
 const resolveNamesBatch = callable<[appids: number[]], Record<string, string>>("resolve_names_batch");
 const saveDemoCache = callable<[cache_data: Record<string, DemoInfo>], boolean>("save_demo_cache");
 const loadDemoCache = callable<[], Record<string, DemoInfo>>("load_demo_cache");
-const setSgdbApiKey = callable<[api_key: string], boolean>("set_sgdb_api_key");
-const getSgdbApiKey = callable<[], string>("get_sgdb_api_key");
-const openUrlInBrowser = callable<[url: string], boolean>("open_url_in_browser");
+
 
 // ---- Types ----
 interface WishlistItem {
@@ -59,7 +57,7 @@ const ITEMS_PER_PAGE = 20;
 const MAX_WISHLIST_PAGES = 20;
 
 const API_KEY_HELP_URL = "https://steamcommunity.com/dev/apikey";
-const SGDB_KEY_HELP_URL = "https://www.steamgriddb.com/profile/preferences/api";
+
 
 // ---- Styles ----
 const containerStyle: React.CSSProperties = {
@@ -224,42 +222,7 @@ let cachedDemoCacheLoaded = false;
 let cachedSortBy: SortMode = "alpha";
 /** Capsule / header image URLs harvested from Steam wishlistdata. */
 let capsuleImageCache: Record<string, string> = {};
-/** SteamGridDB artwork URLs cached in memory (appid → URL). */
-let sgdbImageCache: Record<string, string> = {};
-/** Cached SGDB API key to avoid repeated backend calls (null = not yet loaded). */
-let cachedSgdbApiKey: string | null = null;
 
-/**
- * Fetch a single artwork image URL from SteamGridDB for a Steam AppID.
- * Uses fetchNoCors (Decky's CORS proxy) so requests are made from the
- * frontend, avoiding backend round-trip issues.
- */
-async function fetchSgdbImage(appid: number): Promise<string | null> {
-  try {
-    if (cachedSgdbApiKey === null) {
-      cachedSgdbApiKey = (await getSgdbApiKey()) || "";
-    }
-    if (!cachedSgdbApiKey) return null;
-    const resp = await fetchNoCors(
-      `https://www.steamgriddb.com/api/v2/grids/steam/${appid}`,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${cachedSgdbApiKey}`,
-        },
-      }
-    );
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    if (data?.success && data.data?.length > 0) {
-      return data.data[0].url as string;
-    }
-  } catch (e) {
-    console.error("[Demo Finder] SGDB fetch failed:", e);
-  }
-  return null;
-}
 
 // ---- Helpers ----
 function getSteamId(): string {
@@ -573,128 +536,6 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         Go to steamcommunity.com/dev/apikey to register a key.
         Enter any domain name (e.g. "localhost").
         Your wishlist must also be set to Public.
-      </div>
-    </PanelSection>
-  );
-};
-
-// ---- SteamGridDB API Key Setup ----
-const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, onKeySaved }) => {
-  const [saving, setSaving] = useState(false);
-  const [keyValue, setKeyValue] = useState("");
-  const [showKey, setShowKey] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  // Read the actual DOM input value — handles Steam Deck virtual keyboard
-  // which may set the value without firing React onChange events.
-  const getInputValue = useCallback((): string => {
-    const input = wrapperRef.current?.querySelector("input");
-    if (input && input.value) return input.value;
-    return keyValue;
-  }, [keyValue]);
-
-  // Attach native event listeners to catch input that React's synthetic
-  // event system misses (e.g. Steam Deck virtual keyboard with bIsPassword).
-  // Also poll as a final safety net in case no events fire at all.
-  useEffect(() => {
-    const el = wrapperRef.current;
-    if (!el) return;
-    const input = el.querySelector("input");
-    if (!input) return;
-
-    const sync = () => setKeyValue(input.value);
-    input.addEventListener("input", sync);
-    input.addEventListener("change", sync);
-
-    const id = setInterval(() => {
-      if (input.value !== keyValue) setKeyValue(input.value);
-    }, 400);
-
-    return () => {
-      input.removeEventListener("input", sync);
-      input.removeEventListener("change", sync);
-      clearInterval(id);
-    };
-  }, [keyValue]);
-
-  const handleSave = async () => {
-    const value = getInputValue().trim();
-    if (!value) {
-      toaster.toast({ title: "Demo Finder", body: "Please enter a SteamGridDB API key first." });
-      return;
-    }
-    setSaving(true);
-    try {
-      await setSgdbApiKey(value);
-    } catch (e) {
-      console.error("[Demo Finder] Failed to save SGDB API key:", e);
-      toaster.toast({ title: "Demo Finder", body: "Failed to save SteamGridDB API key. Please try again." });
-      setSaving(false);
-      return;
-    }
-    // Invalidate the frontend SGDB key cache so the next image fetch uses the new key.
-    cachedSgdbApiKey = null;
-    toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
-    setKeyValue("");
-    const input = wrapperRef.current?.querySelector("input");
-    if (input) input.value = "";
-    try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
-    setSaving(false);
-  };
-
-  const openKeyPage = async () => {
-    try {
-      const sc = (window as unknown as { SteamClient?: { System?: { OpenInSystemBrowser?: (url: string) => void } } }).SteamClient;
-      if (sc?.System?.OpenInSystemBrowser) {
-        sc.System.OpenInSystemBrowser(SGDB_KEY_HELP_URL);
-      } else {
-        await openUrlInBrowser(SGDB_KEY_HELP_URL);
-      }
-    } catch (_e) {
-      Navigation.NavigateToExternalWeb(SGDB_KEY_HELP_URL);
-    }
-    Navigation.CloseSideMenus();
-  };
-
-  return (
-    <PanelSection title="SteamGridDB API Key">
-      <div style={helpTextStyle}>
-        {hasKey
-          ? "✅ SteamGridDB key configured. Missing artwork will use SGDB as a fallback."
-          : "⚠️ Optional: Provide a SteamGridDB API key to fill in missing game artwork."}
-      </div>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={openKeyPage}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-            <FaKey size={12} /> Get Your Free SGDB API Key
-          </div>
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <div ref={wrapperRef}>
-          <TextField
-            label="SteamGridDB API Key"
-            value={keyValue}
-            onChange={(e) => setKeyValue(e.target.value)}
-            bIsPassword={!showKey}
-          />
-        </div>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={() => setShowKey(!showKey)}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-            {showKey ? <FaEyeSlash size={12} /> : <FaEye size={12} />}
-            {showKey ? "Hide Key" : "Show Key"}
-          </div>
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving..." : "Save SGDB Key"}
-        </ButtonItem>
-      </PanelSectionRow>
-      <div style={helpTextStyle}>
-        Free key available at steamgriddb.com — provides artwork for games missing images on Steam.
       </div>
     </PanelSection>
   );
@@ -1039,26 +880,10 @@ const FullPageWishlistWithDemos: FC = () => {
                     img.dataset.fbIdx = String(next);
                     img.src = fallbacks[next];
                   } else {
-                    // All Steam CDN URLs exhausted — try SteamGridDB next
-                    const appidStr = String(item.appid);
-                    const showPlaceholder = () => {
-                      img.style.display = "none";
-                      const placeholder = img.parentElement?.querySelector(".img-placeholder") as HTMLElement | null;
-                      if (placeholder) placeholder.style.display = "flex";
-                    };
-                    if (sgdbImageCache[appidStr]) {
-                      img.src = sgdbImageCache[appidStr];
-                    } else {
-                      fetchSgdbImage(item.appid).then((url) => {
-                        if (url) {
-                          sgdbImageCache[appidStr] = url;
-                          img.src = url;
-                        } else {
-                          sgdbImageCache[appidStr] = "";
-                          showPlaceholder();
-                        }
-                      }).catch(() => showPlaceholder());
-                    }
+                    // All Steam CDN URLs exhausted — show placeholder
+                    img.style.display = "none";
+                    const placeholder = img.parentElement?.querySelector(".img-placeholder") as HTMLElement | null;
+                    if (placeholder) placeholder.style.display = "flex";
                   }
                 }}
               />
@@ -1147,8 +972,6 @@ function Content() {
   const [hasScanned, setHasScanned] = useState(cachedHasScanned);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
-  const [hasSgdbKey, setHasSgdbKey] = useState(false);
-  const [showSgdbSetup, setShowSgdbSetup] = useState(false);
   const [sortBy, setSortBy] = useState<SortMode>(cachedSortBy);
   const [optionsCollapsed, setOptionsCollapsed] = useState(false);
   const bumperLabels = useControllerLabels();
@@ -1160,17 +983,6 @@ function Content() {
       return !!key;
     } catch {
       setHasApiKey(false);
-      return false;
-    }
-  }, []);
-
-  const checkSgdbApiKey = useCallback(async () => {
-    try {
-      const key = await getSgdbApiKey();
-      setHasSgdbKey(!!key);
-      return !!key;
-    } catch {
-      setHasSgdbKey(false);
       return false;
     }
   }, []);
@@ -1424,19 +1236,13 @@ function Content() {
         loadWishlist();
       }
     });
-    checkSgdbApiKey();
-  }, [checkApiKey, checkSgdbApiKey, loadWishlist]);
+  }, [checkApiKey, loadWishlist]);
 
   const handleKeySaved = () => {
     setHasApiKey(true);
     setShowSetup(false);
     setError(null);
     loadWishlist();
-  };
-
-  const handleSgdbKeySaved = () => {
-    setHasSgdbKey(true);
-    setShowSgdbSetup(false);
   };
 
   const cycleSortMode = () => {
@@ -1561,14 +1367,6 @@ function Content() {
                 </div>
               </ButtonItem>
             </PanelSectionRow>
-            <PanelSectionRow>
-              <ButtonItem layout="below" onClick={() => setShowSgdbSetup(!showSgdbSetup)}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-                  <FaKey size={12} />
-                  {showSgdbSetup ? "Hide SGDB Setup" : (hasSgdbKey ? "Update SGDB Key" : "Set Up SGDB Artwork Key")}
-                </div>
-              </ButtonItem>
-            </PanelSectionRow>
           </Fragment>
         )}
       </PanelSection>
@@ -1579,10 +1377,6 @@ function Content() {
 
       {showSetup && (
         <ApiKeySetup hasKey={hasApiKey} onKeySaved={handleKeySaved} />
-      )}
-
-      {showSgdbSetup && (
-        <SgdbKeySetup hasKey={hasSgdbKey} onKeySaved={handleSgdbKeySaved} />
       )}
 
       {scanning && (
