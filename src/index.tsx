@@ -509,6 +509,40 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   );
 };
 
+// ---- Bumper Navigation Hook ----
+function useBumperNavigation(
+  setPage: React.Dispatch<React.SetStateAction<number>>,
+  totalPages: number
+) {
+  const totalPagesRef = useRef(totalPages);
+  useEffect(() => { totalPagesRef.current = totalPages; }, [totalPages]);
+
+  useEffect(() => {
+    const prevButtons: Record<number, boolean> = { 4: false, 5: false };
+    const interval = setInterval(() => {
+      const gamepads = navigator.getGamepads?.();
+      if (!gamepads) return;
+      for (const gp of gamepads) {
+        if (!gp) continue;
+        // L1 (button 4) = previous page
+        const l1 = gp.buttons[4]?.pressed ?? false;
+        if (l1 && !prevButtons[4]) {
+          setPage((p) => Math.max(0, p - 1));
+        }
+        prevButtons[4] = l1;
+        // R1 (button 5) = next page
+        const r1 = gp.buttons[5]?.pressed ?? false;
+        if (r1 && !prevButtons[5]) {
+          setPage((p) => Math.min(totalPagesRef.current - 1, p + 1));
+        }
+        prevButtons[5] = r1;
+        break; // Only use the first connected gamepad
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [setPage]);
+}
+
 // ---- Full-Page Wishlist with Demo Integration ----
 const FullPageWishlistWithDemos: FC = () => {
   const [wishlist, setWishlist] = useState<WishlistItemWithDemo[]>(cachedWishlist);
@@ -555,6 +589,8 @@ const FullPageWishlistWithDemos: FC = () => {
     (page + 1) * FULL_PAGE_ITEMS_PER_PAGE
   );
   const demosFoundCount = wishlist.filter((item) => item.demoInfo?.has_demo).length;
+
+  useBumperNavigation(setPage, totalPages);
 
   const cycleSortMode = () => {
     setSortBy((prev) => {
@@ -815,7 +851,7 @@ const FullPageWishlistWithDemos: FC = () => {
                 onActivate={() => setPage(Math.max(0, page - 1))}
                 style={{ ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
               >
-                <div onClick={() => setPage(Math.max(0, page - 1))}>◀ Prev</div>
+                <div onClick={() => setPage(Math.max(0, page - 1))}>L1 ◀ Prev</div>
               </Focusable>
               <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "13px" }}>
                 {page + 1} / {totalPages}
@@ -824,7 +860,7 @@ const FullPageWishlistWithDemos: FC = () => {
                 onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
                 style={{ ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
               >
-                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶</div>
+                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶ R1</div>
               </Focusable>
             </Focusable>
           )}
@@ -1164,6 +1200,8 @@ function Content() {
   const pagedItems = displayItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
   const demosFoundCount = wishlist.filter((item) => item.demoInfo?.has_demo).length;
 
+  useBumperNavigation(setPage, totalPages);
+
   const openFullPage = () => {
     Navigation.Navigate("/demo-finder-wishlist");
   };
@@ -1286,7 +1324,7 @@ function Content() {
               <Focusable onActivate={() => setPage(Math.max(0, page - 1))}
                 style={{ ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
                 focusWithinClassName="demo-finder-page-btn-focus">
-                <div onClick={() => setPage(Math.max(0, page - 1))}>◀ Prev</div>
+                <div onClick={() => setPage(Math.max(0, page - 1))}>L1 ◀ Prev</div>
               </Focusable>
               <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }}>
                 {page + 1} / {totalPages}
@@ -1294,7 +1332,7 @@ function Content() {
               <Focusable onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
                 style={{ ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
                 focusWithinClassName="demo-finder-page-btn-focus">
-                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶</div>
+                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶ R1</div>
               </Focusable>
             </Focusable>
           )}
