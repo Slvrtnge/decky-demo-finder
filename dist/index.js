@@ -205,7 +205,7 @@ const fullPageActiveBtnStyle = {
 };
 const fullPageGridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(266px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(186px, 1fr))",
     gap: "12px", padding: "16px 24px 24px 24px",
     overflowY: "auto", flex: 1,
     minHeight: 0,
@@ -220,7 +220,7 @@ const fullPageCardStyle = {
 };
 const fullPageCardImgStyle = {
     width: "100%", height: "auto",
-    aspectRatio: "460 / 215",
+    aspectRatio: "460 / 279.5",
     objectFit: "contain", display: "block",
     background: "rgba(0,0,0,0.3)",
 };
@@ -454,6 +454,7 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
     const [keyInput, setKeyInput] = SP_REACT.useState("");
     const [saving, setSaving] = SP_REACT.useState(false);
     const fieldRef = SP_REACT.useRef(null);
+    const inputValueRef = SP_REACT.useRef("");
     // Read the input value from the DOM as a fallback when React state
     // is empty.  Steam Deck's virtual keyboard may not fire onChange on
     // paste, leaving keyInput stale while the actual <input> holds the
@@ -461,6 +462,8 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
     const getInputValue = () => {
         if (keyInput.trim())
             return keyInput.trim();
+        if (inputValueRef.current.trim())
+            return inputValueRef.current.trim();
         try {
             const el = fieldRef.current?.querySelector("input");
             if (el?.value?.trim())
@@ -468,6 +471,23 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
         }
         catch (_e) { /* ignore */ }
         return "";
+    };
+    /** Push a value into both React state, the backing ref, and the DOM input. */
+    const setInputValue = (value) => {
+        setKeyInput(value);
+        inputValueRef.current = value;
+        try {
+            const el = fieldRef.current?.querySelector("input");
+            if (el) {
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+                if (nativeSetter)
+                    nativeSetter.call(el, value);
+                else
+                    el.value = value;
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+        }
+        catch (_e) { /* ignore */ }
     };
     const handlePaste = async () => {
         try {
@@ -487,7 +507,7 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
                 }
             }
             if (text?.trim()) {
-                setKeyInput(text.trim());
+                setInputValue(text.trim());
                 toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
             }
             else if (clipboardReadFailed) {
@@ -520,6 +540,7 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
         }
         toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
         setKeyInput("");
+        inputValueRef.current = "";
         try {
             onKeySaved();
         }
@@ -532,16 +553,23 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { title: "Steam API Key Setup", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
                     ? "✅ API key is configured. You can update it below if needed."
-                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
+                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => {
+                            const v = e?.target?.value ?? "";
+                            setKeyInput(v);
+                            inputValueRef.current = v;
+                        }, bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
 };
 // ---- SteamGridDB API Key Setup ----
 const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
     const [keyInput, setKeyInput] = SP_REACT.useState("");
     const [saving, setSaving] = SP_REACT.useState(false);
     const fieldRef = SP_REACT.useRef(null);
+    const inputValueRef = SP_REACT.useRef("");
     const getInputValue = () => {
         if (keyInput.trim())
             return keyInput.trim();
+        if (inputValueRef.current.trim())
+            return inputValueRef.current.trim();
         try {
             const el = fieldRef.current?.querySelector("input");
             if (el?.value?.trim())
@@ -549,6 +577,23 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
         }
         catch (_e) { /* ignore */ }
         return "";
+    };
+    /** Push a value into both React state, the backing ref, and the DOM input. */
+    const setInputValue = (value) => {
+        setKeyInput(value);
+        inputValueRef.current = value;
+        try {
+            const el = fieldRef.current?.querySelector("input");
+            if (el) {
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+                if (nativeSetter)
+                    nativeSetter.call(el, value);
+                else
+                    el.value = value;
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+        }
+        catch (_e) { /* ignore */ }
     };
     const handlePaste = async () => {
         try {
@@ -568,7 +613,7 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
                 }
             }
             if (text?.trim()) {
-                setKeyInput(text.trim());
+                setInputValue(text.trim());
                 toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
             }
             else if (clipboardReadFailed) {
@@ -601,6 +646,7 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
         }
         toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
         setKeyInput("");
+        inputValueRef.current = "";
         try {
             onKeySaved();
         }
@@ -624,7 +670,11 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { title: "SteamGridDB API Key", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
                     ? "✅ SteamGridDB key configured. Missing artwork will use SGDB as a fallback."
-                    : "⚠️ Optional: Provide a SteamGridDB API key to fill in missing game artwork." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free SGDB API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "SteamGridDB API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save SGDB Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Free key available at steamgriddb.com \u2014 provides artwork for games missing images on Steam." })] }));
+                    : "⚠️ Optional: Provide a SteamGridDB API key to fill in missing game artwork." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free SGDB API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "SteamGridDB API Key", value: keyInput, onChange: (e) => {
+                            const v = e?.target?.value ?? "";
+                            setKeyInput(v);
+                            inputValueRef.current = v;
+                        }, bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save SGDB Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Free key available at steamgriddb.com \u2014 provides artwork for games missing images on Steam." })] }));
 };
 function detectControllerType(id) {
     const lower = id.toLowerCase();

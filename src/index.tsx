@@ -160,7 +160,7 @@ const fullPageActiveBtnStyle: React.CSSProperties = {
 
 const fullPageGridStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(266px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fill, minmax(186px, 1fr))",
   gap: "12px", padding: "16px 24px 24px 24px",
   overflowY: "auto", flex: 1,
   minHeight: 0,
@@ -177,7 +177,7 @@ const fullPageCardStyle: React.CSSProperties = {
 
 const fullPageCardImgStyle: React.CSSProperties = {
   width: "100%", height: "auto",
-  aspectRatio: "460 / 215",
+  aspectRatio: "460 / 279.5",
   objectFit: "contain", display: "block",
   background: "rgba(0,0,0,0.3)",
 };
@@ -443,6 +443,7 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   const [keyInput, setKeyInput] = useState("");
   const [saving, setSaving] = useState(false);
   const fieldRef = useRef<HTMLDivElement>(null);
+  const inputValueRef = useRef("");
 
   // Read the input value from the DOM as a fallback when React state
   // is empty.  Steam Deck's virtual keyboard may not fire onChange on
@@ -450,11 +451,27 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   // pasted text.
   const getInputValue = (): string => {
     if (keyInput.trim()) return keyInput.trim();
+    if (inputValueRef.current.trim()) return inputValueRef.current.trim();
     try {
       const el = fieldRef.current?.querySelector("input") as HTMLInputElement | null;
       if (el?.value?.trim()) return el.value.trim();
     } catch (_e) { /* ignore */ }
     return "";
+  };
+
+  /** Push a value into both React state, the backing ref, and the DOM input. */
+  const setInputValue = (value: string) => {
+    setKeyInput(value);
+    inputValueRef.current = value;
+    try {
+      const el = fieldRef.current?.querySelector("input") as HTMLInputElement | null;
+      if (el) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+        if (nativeSetter) nativeSetter.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } catch (_e) { /* ignore */ }
   };
 
   const handlePaste = async () => {
@@ -473,7 +490,7 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         }
       }
       if (text?.trim()) {
-        setKeyInput(text.trim());
+        setInputValue(text.trim());
         toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
       } else if (clipboardReadFailed) {
         toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Please paste your key into the text field manually." });
@@ -503,6 +520,7 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
     }
     toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
     setKeyInput("");
+    inputValueRef.current = "";
     try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
     setSaving(false);
   };
@@ -531,7 +549,11 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
           <TextField
             label="Steam Web API Key"
             value={keyInput}
-            onChange={(e) => setKeyInput(e?.target?.value ?? "")}
+            onChange={(e) => {
+              const v = e?.target?.value ?? "";
+              setKeyInput(v);
+              inputValueRef.current = v;
+            }}
             bIsPassword={true}
           />
         </div>
@@ -562,14 +584,31 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
   const [keyInput, setKeyInput] = useState("");
   const [saving, setSaving] = useState(false);
   const fieldRef = useRef<HTMLDivElement>(null);
+  const inputValueRef = useRef("");
 
   const getInputValue = (): string => {
     if (keyInput.trim()) return keyInput.trim();
+    if (inputValueRef.current.trim()) return inputValueRef.current.trim();
     try {
       const el = fieldRef.current?.querySelector("input") as HTMLInputElement | null;
       if (el?.value?.trim()) return el.value.trim();
     } catch (_e) { /* ignore */ }
     return "";
+  };
+
+  /** Push a value into both React state, the backing ref, and the DOM input. */
+  const setInputValue = (value: string) => {
+    setKeyInput(value);
+    inputValueRef.current = value;
+    try {
+      const el = fieldRef.current?.querySelector("input") as HTMLInputElement | null;
+      if (el) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+        if (nativeSetter) nativeSetter.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } catch (_e) { /* ignore */ }
   };
 
   const handlePaste = async () => {
@@ -588,7 +627,7 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
         }
       }
       if (text?.trim()) {
-        setKeyInput(text.trim());
+        setInputValue(text.trim());
         toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
       } else if (clipboardReadFailed) {
         toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Please paste your key into the text field manually." });
@@ -618,6 +657,7 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
     }
     toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
     setKeyInput("");
+    inputValueRef.current = "";
     try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
     setSaving(false);
   };
@@ -655,7 +695,11 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
           <TextField
             label="SteamGridDB API Key"
             value={keyInput}
-            onChange={(e) => setKeyInput(e?.target?.value ?? "")}
+            onChange={(e) => {
+              const v = e?.target?.value ?? "";
+              setKeyInput(v);
+              inputValueRef.current = v;
+            }}
             bIsPassword={true}
           />
         </div>
