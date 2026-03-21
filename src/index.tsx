@@ -460,20 +460,29 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   const handlePaste = async () => {
     try {
       let text = "";
+      let clipboardReadFailed = false;
       try {
         text = await navigator.clipboard.readText();
-      } catch (_e) { /* browser API unavailable */ }
+      } catch (_e) { /* browser API unavailable on Steam Deck */ }
       if (!text) {
-        try { text = await readClipboard(); } catch (_e) { /* backend fallback failed */ }
+        try {
+          text = await readClipboard();
+        } catch (e) {
+          console.error("[Demo Finder] Backend clipboard read failed:", e);
+          clipboardReadFailed = true;
+        }
       }
       if (text?.trim()) {
         setKeyInput(text.trim());
         toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
+      } else if (clipboardReadFailed) {
+        toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Please paste your key into the text field manually." });
       } else {
-        toaster.toast({ title: "Demo Finder", body: "Clipboard is empty." });
+        toaster.toast({ title: "Demo Finder", body: "Clipboard appears empty. Copy your key first, then try again." });
       }
-    } catch (_e) {
-      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard." });
+    } catch (e) {
+      console.error("[Demo Finder] Clipboard paste error:", e);
+      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Please paste your key into the text field manually." });
     }
   };
 
@@ -486,13 +495,15 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
     setSaving(true);
     try {
       await setApiKey(value);
-      toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
-      setKeyInput("");
-      onKeySaved();
     } catch (e) {
       console.error("[Demo Finder] Failed to save API key:", e);
-      toaster.toast({ title: "Demo Finder", body: "Failed to save API key." });
+      toaster.toast({ title: "Demo Finder", body: "Failed to save API key. Please try again." });
+      setSaving(false);
+      return;
     }
+    toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
+    setKeyInput("");
+    try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
     setSaving(false);
   };
 
@@ -564,20 +575,29 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
   const handlePaste = async () => {
     try {
       let text = "";
+      let clipboardReadFailed = false;
       try {
         text = await navigator.clipboard.readText();
-      } catch (_e) { /* browser API unavailable */ }
+      } catch (_e) { /* browser API unavailable on Steam Deck */ }
       if (!text) {
-        try { text = await readClipboard(); } catch (_e) { /* backend fallback failed */ }
+        try {
+          text = await readClipboard();
+        } catch (e) {
+          console.error("[Demo Finder] Backend clipboard read failed:", e);
+          clipboardReadFailed = true;
+        }
       }
       if (text?.trim()) {
         setKeyInput(text.trim());
         toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
+      } else if (clipboardReadFailed) {
+        toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Please paste your key into the text field manually." });
       } else {
-        toaster.toast({ title: "Demo Finder", body: "Clipboard is empty." });
+        toaster.toast({ title: "Demo Finder", body: "Clipboard appears empty. Copy your key first, then try again." });
       }
-    } catch (_e) {
-      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard." });
+    } catch (e) {
+      console.error("[Demo Finder] Clipboard paste error:", e);
+      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Please paste your key into the text field manually." });
     }
   };
 
@@ -590,13 +610,15 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
     setSaving(true);
     try {
       await setSgdbApiKey(value);
-      toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
-      setKeyInput("");
-      onKeySaved();
     } catch (e) {
       console.error("[Demo Finder] Failed to save SGDB API key:", e);
-      toaster.toast({ title: "Demo Finder", body: "Failed to save SteamGridDB API key." });
+      toaster.toast({ title: "Demo Finder", body: "Failed to save SteamGridDB API key. Please try again." });
+      setSaving(false);
+      return;
     }
+    toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
+    setKeyInput("");
+    try { onKeySaved(); } catch (_e) { /* best-effort post-save callback */ }
     setSaving(false);
   };
 

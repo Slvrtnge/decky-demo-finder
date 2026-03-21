@@ -102,7 +102,11 @@ def _fix_readonly(path: str, is_dir: bool) -> None:
 
 
 def _save_settings(settings: dict) -> None:
-    """Persist settings to disk."""
+    """Persist settings to disk.
+
+    Uses an atomic write strategy (write to temp file then rename) so
+    that a crash mid-write does not corrupt the settings file.
+    """
     path = _get_settings_path()
     settings_dir = os.path.dirname(path)
     # Ensure the directory exists (may have been removed since load).
@@ -111,10 +115,18 @@ def _save_settings(settings: dict) -> None:
     _fix_readonly(settings_dir, is_dir=True)
     if os.path.exists(path):
         _fix_readonly(path, is_dir=False)
+
+    tmp_path = path + ".tmp"
     try:
-        with open(path, "w") as f:
+        with open(tmp_path, "w") as f:
             json_module.dump(settings, f, indent=2)
+        os.replace(tmp_path, path)
     except Exception as e:
+        # Clean up temp file on failure.
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
         decky.logger.error(f"Failed to write settings to {path}: {e}")
         raise
 
@@ -437,7 +449,13 @@ class Plugin:
         Tries several common clipboard utilities available on Linux /
         SteamOS so that at least one succeeds regardless of whether the
         session is Wayland or X11.
+
+        The Decky backend may not inherit the user's display-session
+        environment variables, so we detect and inject ``DISPLAY``,
+        ``WAYLAND_DISPLAY`` and ``XDG_RUNTIME_DIR`` when they are
+        missing.
         """
+        env = self._build_clipboard_env()
         for cmd in [
             ["wl-paste", "--no-newline"],
             ["xclip", "-selection", "clipboard", "-o"],
@@ -445,15 +463,69 @@ class Plugin:
         ]:
             try:
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=5
+                    cmd, capture_output=True, text=True, timeout=5,
+                    env=env,
                 )
                 if result.returncode == 0:
                     return result.stdout.strip()
+                decky.logger.debug(
+                    f"read_clipboard: {cmd[0]} exited {result.returncode}: "
+                    f"{result.stderr.strip()}"
+                )
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 continue
             except Exception as e:
                 decky.logger.warning(f"read_clipboard: {cmd[0]} failed: {e}")
+        decky.logger.warning("read_clipboard: all clipboard tools failed")
         return ""
+
+    @staticmethod
+    def _build_clipboard_env() -> dict:
+        """Return an environment dict suitable for clipboard subprocess calls.
+
+        On SteamOS / Steam Deck the Decky backend process often lacks
+        ``DISPLAY``, ``WAYLAND_DISPLAY`` and ``XDG_RUNTIME_DIR``.  We
+        attempt to detect sensible defaults so that ``wl-paste``,
+        ``xclip`` and ``xsel`` can connect to the user's session.
+        """
+        env = os.environ.copy()
+
+        # ---- XDG_RUNTIME_DIR ----
+        if "XDG_RUNTIME_DIR" not in env:
+            for uid in ("1000", str(os.getuid())):
+                candidate = f"/run/user/{uid}"
+                if os.path.isdir(candidate):
+                    env["XDG_RUNTIME_DIR"] = candidate
+                    break
+
+        # ---- DISPLAY (X11) ----
+        if "DISPLAY" not in env:
+            x11_dir = "/tmp/.X11-unix"
+            if os.path.isdir(x11_dir):
+                try:
+                    sockets = sorted(os.listdir(x11_dir))
+                    for sock in sockets:
+                        if sock.startswith("X"):
+                            env["DISPLAY"] = f":{sock[1:]}"
+                            break
+                except OSError:
+                    pass
+            if "DISPLAY" not in env:
+                env["DISPLAY"] = ":0"
+
+        # ---- WAYLAND_DISPLAY ----
+        if "WAYLAND_DISPLAY" not in env:
+            xdg = env.get("XDG_RUNTIME_DIR", "")
+            if xdg and os.path.isdir(xdg):
+                try:
+                    for name in sorted(os.listdir(xdg)):
+                        if name.startswith("wayland-") and not name.endswith(".lock"):
+                            env["WAYLAND_DISPLAY"] = name
+                            break
+                except OSError:
+                    pass
+
+        return env
 
     async def fetch_sgdb_images_batch(self, appids: list) -> dict:
         """
