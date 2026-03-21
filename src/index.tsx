@@ -1176,7 +1176,7 @@ const FullPageWishlistWithDemos: FC = () => {
                   <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.3)" }}>No demo</span>
                 )}
                 {item.demoInfo?.release_date && (
-                  <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)" }}>
+                  <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginLeft: "6%" }}>
                     {item.demoInfo.release_date}
                   </span>
                 )}
