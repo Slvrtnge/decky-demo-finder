@@ -225,23 +225,24 @@ const fullPageCardImgStyle = {
     background: "rgba(0,0,0,0.3)",
 };
 const fullPageCardBodyStyle = {
-    padding: "8px", flex: 1,
-    display: "flex", flexDirection: "column", gap: "6px",
-    marginTop: "-10%",
+    padding: "4px 8px", flex: 1,
+    display: "flex", flexDirection: "row", gap: "6px",
+    alignItems: "center",
+    marginTop: "-5%",
 };
 const fullPageCardNameStyle = {
     fontSize: "12px", fontWeight: "bold",
     overflow: "hidden", textOverflow: "ellipsis",
-    display: "-webkit-box", WebkitLineClamp: 2,
-    WebkitBoxOrient: "vertical",
+    whiteSpace: "nowrap",
+    flex: 1, minWidth: 0,
     lineHeight: "1.3",
 };
 const fullPageDemoBadgeStyle = {
-    display: "inline-flex", alignItems: "center", gap: "4px",
-    padding: "3px 8px", borderRadius: "3px", fontSize: "10px",
+    display: "inline-flex", alignItems: "center", gap: "3px",
+    padding: "2px 6px", borderRadius: "3px", fontSize: "9px",
     fontWeight: "bold",
     background: "linear-gradient(135deg, #1a9fff 0%, #0070d1 100%)",
-    color: "#fff", alignSelf: "flex-start",
+    color: "#fff", flexShrink: 0,
 };
 const fullPageStatusStyle = {
     textAlign: "center", padding: "32px", fontSize: "14px",
