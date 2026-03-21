@@ -105,6 +105,8 @@ def _save_settings(settings: dict) -> None:
     """Persist settings to disk."""
     path = _get_settings_path()
     settings_dir = os.path.dirname(path)
+    # Ensure the directory exists (may have been removed since load).
+    os.makedirs(settings_dir, exist_ok=True)
     # Attempt to fix read-only permissions on the directory and file before writing.
     _fix_readonly(settings_dir, is_dir=True)
     if os.path.exists(path):
@@ -428,6 +430,30 @@ class Plugin:
         except Exception as e:
             decky.logger.error(f"open_url_in_browser failed: {e}")
             return False
+
+    async def read_clipboard(self) -> str:
+        """Read text from the system clipboard.
+
+        Tries several common clipboard utilities available on Linux /
+        SteamOS so that at least one succeeds regardless of whether the
+        session is Wayland or X11.
+        """
+        for cmd in [
+            ["wl-paste", "--no-newline"],
+            ["xclip", "-selection", "clipboard", "-o"],
+            ["xsel", "--clipboard", "--output"],
+        ]:
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+            except Exception as e:
+                decky.logger.warning(f"read_clipboard: {cmd[0]} failed: {e}")
+        return ""
 
     async def fetch_sgdb_images_batch(self, appids: list) -> dict:
         """
