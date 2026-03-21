@@ -509,6 +509,34 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   );
 };
 
+// ---- Controller type detection ----
+type ControllerType = "playstation" | "xbox" | "unknown";
+
+function detectControllerType(id: string): ControllerType {
+  const lower = id.toLowerCase();
+  if (
+    lower.includes("054c") || // Sony vendor ID
+    lower.includes("playstation") ||
+    lower.includes("dualshock") ||
+    lower.includes("dualsense")
+  ) return "playstation";
+  if (
+    lower.includes("045e") || // Microsoft vendor ID
+    lower.includes("xbox") ||
+    lower.includes("xinput") ||
+    lower.includes("28de") || // Valve vendor ID
+    lower.includes("steam") ||
+    lower.includes("valve")
+  ) return "xbox";
+  return "unknown";
+}
+
+function getBumperLabels(type: ControllerType): { prev: string; next: string } {
+  if (type === "xbox") return { prev: "LB", next: "RB" };
+  // PlayStation and unknown default to L1/R1 (Steam Deck uses L1/R1 labeling)
+  return { prev: "L1", next: "R1" };
+}
+
 // ---- Bumper Navigation Hook ----
 function useBumperNavigation(
   setPage: React.Dispatch<React.SetStateAction<number>>,
@@ -524,13 +552,13 @@ function useBumperNavigation(
       if (!gamepads) return;
       for (const gp of gamepads) {
         if (!gp) continue;
-        // L1 (button 4) = previous page
+        // L1/LB (button 4) = previous page
         const l1 = gp.buttons[4]?.pressed ?? false;
         if (l1 && !prevButtons[4]) {
           setPage((p) => Math.max(0, p - 1));
         }
         prevButtons[4] = l1;
-        // R1 (button 5) = next page
+        // R1/RB (button 5) = next page
         const r1 = gp.buttons[5]?.pressed ?? false;
         if (r1 && !prevButtons[5]) {
           setPage((p) => Math.min(totalPagesRef.current - 1, p + 1));
@@ -543,6 +571,30 @@ function useBumperNavigation(
   }, [setPage]);
 }
 
+/** Polls the first connected gamepad and returns controller-appropriate bumper labels. */
+function useControllerLabels(): { prev: string; next: string } {
+  const [labels, setLabels] = useState<{ prev: string; next: string }>({ prev: "L1", next: "R1" });
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const gamepads = navigator.getGamepads?.();
+      if (!gamepads) return;
+      for (const gp of gamepads) {
+        if (!gp) continue;
+        const type = detectControllerType(gp.id);
+        const newLabels = getBumperLabels(type);
+        setLabels((cur) =>
+          cur.prev === newLabels.prev && cur.next === newLabels.next ? cur : newLabels
+        );
+        return;
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return labels;
+}
+
 // ---- Full-Page Wishlist with Demo Integration ----
 const FullPageWishlistWithDemos: FC = () => {
   const [wishlist, setWishlist] = useState<WishlistItemWithDemo[]>(cachedWishlist);
@@ -552,6 +604,7 @@ const FullPageWishlistWithDemos: FC = () => {
   const [scanProgress, setScanProgress] = useState("");
   const [sortBy, setSortBy] = useState<SortMode>(cachedSortBy);
   const [page, setPage] = useState(0);
+  const bumperLabels = useControllerLabels();
 
   // Sync back to module-level cache
   useEffect(() => { cachedWishlist = wishlist; }, [wishlist]);
@@ -779,8 +832,13 @@ const FullPageWishlistWithDemos: FC = () => {
                     `${cdnBase}capsule_616x353.jpg`,
                     `${sharedBase}capsule_616x353.jpg`,
                     `${cdnBase}library_600x900.jpg`,
+                    `${sharedBase}library_600x900.jpg`,
+                    `${cdnBase}hero_capsule.jpg`,
+                    `${sharedBase}hero_capsule.jpg`,
                     `${cdnBase}capsule_231x87.jpg`,
                     `${sharedBase}capsule_231x87.jpg`,
+                    `${cdnBase}capsule_sm_120.jpg`,
+                    `${sharedBase}capsule_sm_120.jpg`,
                   ];
                   let next = parseInt(img.dataset.fbIdx ?? "-1", 10) + 1;
                   // Skip any fallback whose base URL matches the currently-failed src
@@ -851,7 +909,7 @@ const FullPageWishlistWithDemos: FC = () => {
                 onActivate={() => setPage(Math.max(0, page - 1))}
                 style={{ ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
               >
-                <div onClick={() => setPage(Math.max(0, page - 1))}>L1 ◀ Prev</div>
+                <div onClick={() => setPage(Math.max(0, page - 1))}>{bumperLabels.prev} ◀ Prev</div>
               </Focusable>
               <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "13px" }}>
                 {page + 1} / {totalPages}
@@ -860,7 +918,7 @@ const FullPageWishlistWithDemos: FC = () => {
                 onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
                 style={{ ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
               >
-                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶ R1</div>
+                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶ {bumperLabels.next}</div>
               </Focusable>
             </Focusable>
           )}
@@ -885,6 +943,7 @@ function Content() {
   const [showSetup, setShowSetup] = useState(false);
   const [sortBy, setSortBy] = useState<SortMode>(cachedSortBy);
   const [optionsCollapsed, setOptionsCollapsed] = useState(false);
+  const bumperLabels = useControllerLabels();
 
   const checkApiKey = useCallback(async () => {
     try {
@@ -1324,7 +1383,7 @@ function Content() {
               <Focusable onActivate={() => setPage(Math.max(0, page - 1))}
                 style={{ ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }}
                 focusWithinClassName="demo-finder-page-btn-focus">
-                <div onClick={() => setPage(Math.max(0, page - 1))}>L1 ◀ Prev</div>
+                <div onClick={() => setPage(Math.max(0, page - 1))}>{bumperLabels.prev} ◀ Prev</div>
               </Focusable>
               <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }}>
                 {page + 1} / {totalPages}
@@ -1332,7 +1391,7 @@ function Content() {
               <Focusable onActivate={() => setPage(Math.min(totalPages - 1, page + 1))}
                 style={{ ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }}
                 focusWithinClassName="demo-finder-page-btn-focus">
-                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶ R1</div>
+                <div onClick={() => setPage(Math.min(totalPages - 1, page + 1))}>Next ▶ {bumperLabels.next}</div>
               </Focusable>
             </Focusable>
           )}

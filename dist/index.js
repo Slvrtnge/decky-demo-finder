@@ -484,6 +484,28 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
                     ? "✅ API key is configured. You can update it below if needed."
                     : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => setKeyInput(e?.target?.value ?? ""), bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
 };
+function detectControllerType(id) {
+    const lower = id.toLowerCase();
+    if (lower.includes("054c") || // Sony vendor ID
+        lower.includes("playstation") ||
+        lower.includes("dualshock") ||
+        lower.includes("dualsense"))
+        return "playstation";
+    if (lower.includes("045e") || // Microsoft vendor ID
+        lower.includes("xbox") ||
+        lower.includes("xinput") ||
+        lower.includes("28de") || // Valve vendor ID
+        lower.includes("steam") ||
+        lower.includes("valve"))
+        return "xbox";
+    return "unknown";
+}
+function getBumperLabels(type) {
+    if (type === "xbox")
+        return { prev: "LB", next: "RB" };
+    // PlayStation and unknown default to L1/R1 (Steam Deck uses L1/R1 labeling)
+    return { prev: "L1", next: "R1" };
+}
 // ---- Bumper Navigation Hook ----
 function useBumperNavigation(setPage, totalPages) {
     const totalPagesRef = SP_REACT.useRef(totalPages);
@@ -497,13 +519,13 @@ function useBumperNavigation(setPage, totalPages) {
             for (const gp of gamepads) {
                 if (!gp)
                     continue;
-                // L1 (button 4) = previous page
+                // L1/LB (button 4) = previous page
                 const l1 = gp.buttons[4]?.pressed ?? false;
                 if (l1 && !prevButtons[4]) {
                     setPage((p) => Math.max(0, p - 1));
                 }
                 prevButtons[4] = l1;
-                // R1 (button 5) = next page
+                // R1/RB (button 5) = next page
                 const r1 = gp.buttons[5]?.pressed ?? false;
                 if (r1 && !prevButtons[5]) {
                     setPage((p) => Math.min(totalPagesRef.current - 1, p + 1));
@@ -515,6 +537,27 @@ function useBumperNavigation(setPage, totalPages) {
         return () => clearInterval(interval);
     }, [setPage]);
 }
+/** Polls the first connected gamepad and returns controller-appropriate bumper labels. */
+function useControllerLabels() {
+    const [labels, setLabels] = SP_REACT.useState({ prev: "L1", next: "R1" });
+    SP_REACT.useEffect(() => {
+        const interval = setInterval(() => {
+            const gamepads = navigator.getGamepads?.();
+            if (!gamepads)
+                return;
+            for (const gp of gamepads) {
+                if (!gp)
+                    continue;
+                const type = detectControllerType(gp.id);
+                const newLabels = getBumperLabels(type);
+                setLabels((cur) => cur.prev === newLabels.prev && cur.next === newLabels.next ? cur : newLabels);
+                return;
+            }
+        }, 500);
+        return () => clearInterval(interval);
+    }, []);
+    return labels;
+}
 // ---- Full-Page Wishlist with Demo Integration ----
 const FullPageWishlistWithDemos = () => {
     const [wishlist, setWishlist] = SP_REACT.useState(cachedWishlist);
@@ -524,6 +567,7 @@ const FullPageWishlistWithDemos = () => {
     const [scanProgress, setScanProgress] = SP_REACT.useState("");
     const [sortBy, setSortBy] = SP_REACT.useState(cachedSortBy);
     const [page, setPage] = SP_REACT.useState(0);
+    const bumperLabels = useControllerLabels();
     // Sync back to module-level cache
     SP_REACT.useEffect(() => { cachedWishlist = wishlist; }, [wishlist]);
     SP_REACT.useEffect(() => { cachedHasScanned = hasScanned; }, [hasScanned]);
@@ -657,8 +701,13 @@ const FullPageWishlistWithDemos = () => {
                                         `${cdnBase}capsule_616x353.jpg`,
                                         `${sharedBase}capsule_616x353.jpg`,
                                         `${cdnBase}library_600x900.jpg`,
+                                        `${sharedBase}library_600x900.jpg`,
+                                        `${cdnBase}hero_capsule.jpg`,
+                                        `${sharedBase}hero_capsule.jpg`,
                                         `${cdnBase}capsule_231x87.jpg`,
                                         `${sharedBase}capsule_231x87.jpg`,
+                                        `${cdnBase}capsule_sm_120.jpg`,
+                                        `${sharedBase}capsule_sm_120.jpg`,
                                     ];
                                     let next = parseInt(img.dataset.fbIdx ?? "-1", 10) + 1;
                                     // Skip any fallback whose base URL matches the currently-failed src
@@ -683,7 +732,7 @@ const FullPageWishlistWithDemos = () => {
                                     fontSize: "11px", color: "rgba(255,255,255,0.35)",
                                     textAlign: "center", padding: "8px", boxSizing: "border-box",
                                     overflow: "hidden", textOverflow: "ellipsis",
-                                }, children: SP_JSX.jsx(FaGamepad, { size: 20, style: { opacity: 0.3 } }) }), SP_JSX.jsxs("div", { style: fullPageCardBodyStyle, children: [SP_JSX.jsx("div", { style: fullPageCardNameStyle, title: item.name, children: item.name }), item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DFL.Focusable, { style: { display: "contents" }, onActivate: () => { openDemo(item.demoInfo, item.name); }, children: SP_JSX.jsxs("div", { style: fullPageDemoBadgeStyle, onClick: (e) => { e.stopPropagation(); openDemo(item.demoInfo, item.name); }, children: [SP_JSX.jsx(FaGamepad, { size: 9 }), " Play Demo"] }) })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" }))) : !hasScanned ? (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.2)" }, children: "\u2014" })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" })), item.demoInfo?.release_date && (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.4)" }, children: item.demoInfo.release_date }))] })] }, item.appid))), !scanning && totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { ...fullPagePaginationStyle, gridColumn: "1 / -1" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "L1 \u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "13px" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6 R1" }) })] }))] }))] }));
+                                }, children: SP_JSX.jsx(FaGamepad, { size: 20, style: { opacity: 0.3 } }) }), SP_JSX.jsxs("div", { style: fullPageCardBodyStyle, children: [SP_JSX.jsx("div", { style: fullPageCardNameStyle, title: item.name, children: item.name }), item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DFL.Focusable, { style: { display: "contents" }, onActivate: () => { openDemo(item.demoInfo, item.name); }, children: SP_JSX.jsxs("div", { style: fullPageDemoBadgeStyle, onClick: (e) => { e.stopPropagation(); openDemo(item.demoInfo, item.name); }, children: [SP_JSX.jsx(FaGamepad, { size: 9 }), " Play Demo"] }) })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" }))) : !hasScanned ? (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.2)" }, children: "\u2014" })) : (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.3)" }, children: "No demo" })), item.demoInfo?.release_date && (SP_JSX.jsx("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.4)" }, children: item.demoInfo.release_date }))] })] }, item.appid))), !scanning && totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { ...fullPagePaginationStyle, gridColumn: "1 / -1" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...fullPageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, children: SP_JSX.jsxs("div", { onClick: () => setPage(Math.max(0, page - 1)), children: [bumperLabels.prev, " \u25C0 Prev"] }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "13px" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...fullPageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, children: SP_JSX.jsxs("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: ["Next \u25B6 ", bumperLabels.next] }) })] }))] }))] }));
 };
 // ---- Main Content ----
 function Content() {
@@ -700,6 +749,7 @@ function Content() {
     const [showSetup, setShowSetup] = SP_REACT.useState(false);
     const [sortBy, setSortBy] = SP_REACT.useState(cachedSortBy);
     const [optionsCollapsed, setOptionsCollapsed] = SP_REACT.useState(false);
+    const bumperLabels = useControllerLabels();
     const checkApiKey = SP_REACT.useCallback(async () => {
         try {
             const key = await getApiKey();
@@ -1001,7 +1051,7 @@ function Content() {
     const openFullPage = () => {
         DFL.Navigation.Navigate("/demo-finder-wishlist");
     };
-    return (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs(DFL.PanelSection, { title: "Wishlist Demo Finder", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openFullPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaGamepad, { size: 14 }), " Open Full Wishlist View"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setOptionsCollapsed(!optionsCollapsed), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [optionsCollapsed ? SP_JSX.jsx(FaChevronDown, { size: 12 }) : SP_JSX.jsx(FaChevronUp, { size: 12 }), optionsCollapsed ? "Show Options" : "Hide Options"] }) }) }), !optionsCollapsed && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: loadWishlist, disabled: loading || scanning, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSyncAlt, { size: 14 }), loading ? "Loading..." : "Refresh Wishlist"] }) }) }), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => scanForDemos(), disabled: scanning || loading, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSearch, { size: 14 }), scanning ? "Scanning..." : hasScanned ? `Re-scan ${wishlist.length} Games` : `Scan ${wishlist.length} Games for Demos`] }) }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: cycleSortMode, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 14 }), "Sort: ", sortLabel[sortBy]] }) }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowSetup(!showSetup), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")] }) }) })] }))] }), error && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: { ...statusStyle, color: "#ff6b6b" }, children: error }) })), showSetup && (SP_JSX.jsx(ApiKeySetup, { hasKey: hasApiKey, onKeySaved: handleKeySaved })), scanning && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: scanProgress }) })), loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Loading wishlist..." }) })), resolvingNames && !loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Resolving game names..." }) })), !loading && wishlist.length > 0 && (SP_JSX.jsxs(DFL.PanelSection, { title: filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`, children: [SP_JSX.jsx("div", { style: containerStyle, children: pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: itemContainerStyle, focusWithinClassName: "demo-finder-item-focus", children: [SP_JSX.jsx("div", { style: gameNameStyle, title: item.name, children: item.name }), SP_JSX.jsxs("div", { style: { display: "flex", gap: "4px", alignItems: "center" }, children: [item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DemoButton, { demoInfo: item.demoInfo, gameName: item.name })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" }))) : hasScanned ? (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "\u2014" })), SP_JSX.jsx(GameStoreLinkButton, { appid: item.appid, gameName: item.name })] })] }, item.appid))) }), totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0 12px 0" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsx("div", { onClick: () => setPage(Math.max(0, page - 1)), children: "L1 \u25C0 Prev" }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsx("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: "Next \u25B6 R1" }) })] }))] }))] }));
+    return (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs(DFL.PanelSection, { title: "Wishlist Demo Finder", children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openFullPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaGamepad, { size: 14 }), " Open Full Wishlist View"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setOptionsCollapsed(!optionsCollapsed), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [optionsCollapsed ? SP_JSX.jsx(FaChevronDown, { size: 12 }) : SP_JSX.jsx(FaChevronUp, { size: 12 }), optionsCollapsed ? "Show Options" : "Hide Options"] }) }) }), !optionsCollapsed && (SP_JSX.jsxs(SP_REACT.Fragment, { children: [SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: loadWishlist, disabled: loading || scanning, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSyncAlt, { size: 14 }), loading ? "Loading..." : "Refresh Wishlist"] }) }) }), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => scanForDemos(), disabled: scanning || loading, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSearch, { size: 14 }), scanning ? "Scanning..." : hasScanned ? `Re-scan ${wishlist.length} Games` : `Scan ${wishlist.length} Games for Demos`] }) }) })), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `Show All (${wishlist.length})` : `Show Only Demos (${demosFoundCount})` }) })), wishlist.length > 0 && (SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: cycleSortMode, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 14 }), "Sort: ", sortLabel[sortBy]] }) }) })), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowSetup(!showSetup), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), showSetup ? "Hide Setup" : (hasApiKey ? "Update API Key" : "⚠️ Set Up API Key")] }) }) })] }))] }), error && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: { ...statusStyle, color: "#ff6b6b" }, children: error }) })), showSetup && (SP_JSX.jsx(ApiKeySetup, { hasKey: hasApiKey, onKeySaved: handleKeySaved })), scanning && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: scanProgress }) })), loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Loading wishlist..." }) })), resolvingNames && !loading && (SP_JSX.jsx(DFL.PanelSection, { children: SP_JSX.jsx("div", { style: statusStyle, children: "Resolving game names..." }) })), !loading && wishlist.length > 0 && (SP_JSX.jsxs(DFL.PanelSection, { title: filterDemoOnly ? `Demos (${demosFoundCount})` : `Wishlist (${displayItems.length})`, children: [SP_JSX.jsx("div", { style: containerStyle, children: pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: itemContainerStyle, focusWithinClassName: "demo-finder-item-focus", children: [SP_JSX.jsx("div", { style: gameNameStyle, title: item.name, children: item.name }), SP_JSX.jsxs("div", { style: { display: "flex", gap: "4px", alignItems: "center" }, children: [item.demoInfo ? (item.demoInfo.has_demo ? (SP_JSX.jsx(DemoButton, { demoInfo: item.demoInfo, gameName: item.name })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" }))) : hasScanned ? (SP_JSX.jsx("span", { style: noDemoStyle, children: "No demo" })) : (SP_JSX.jsx("span", { style: noDemoStyle, children: "\u2014" })), SP_JSX.jsx(GameStoreLinkButton, { appid: item.appid, gameName: item.name })] })] }, item.appid))) }), totalPages > 1 && (SP_JSX.jsxs(DFL.Focusable, { style: { display: "flex", justifyContent: "center", gap: "12px", padding: "8px 0 12px 0" }, children: [SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.max(0, page - 1)), style: { ...pageBtnStyle, opacity: page === 0 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsxs("div", { onClick: () => setPage(Math.max(0, page - 1)), children: [bumperLabels.prev, " \u25C0 Prev"] }) }), SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", alignSelf: "center" }, children: [page + 1, " / ", totalPages] }), SP_JSX.jsx(DFL.Focusable, { onActivate: () => setPage(Math.min(totalPages - 1, page + 1)), style: { ...pageBtnStyle, opacity: page >= totalPages - 1 ? 0.3 : 1 }, focusWithinClassName: "demo-finder-page-btn-focus", children: SP_JSX.jsxs("div", { onClick: () => setPage(Math.min(totalPages - 1, page + 1)), children: ["Next \u25B6 ", bumperLabels.next] }) })] }))] }))] }));
 }
 // ---- Plugin Registration ----
 var index = definePlugin(() => {
