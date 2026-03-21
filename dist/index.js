@@ -219,9 +219,9 @@ const fullPageCardStyle = {
     display: "flex", flexDirection: "column",
 };
 const fullPageCardImgStyle = {
-    width: "100%", height: "auto",
-    aspectRatio: "460 / 279.5",
-    objectFit: "contain", display: "block",
+    width: "100%", height: "100%",
+    aspectRatio: "460 / 215",
+    objectFit: "cover", display: "block",
     background: "rgba(0,0,0,0.3)",
 };
 const fullPageCardBodyStyle = {
@@ -451,43 +451,61 @@ const GameStoreLinkButton = ({ appid, gameName }) => {
 };
 // ---- API Key Setup ----
 const ApiKeySetup = ({ hasKey, onKeySaved }) => {
-    const [keyInput, setKeyInput] = SP_REACT.useState("");
     const [saving, setSaving] = SP_REACT.useState(false);
-    const fieldRef = SP_REACT.useRef(null);
-    const inputValueRef = SP_REACT.useRef("");
-    // Read the input value from the DOM as a fallback when React state
-    // is empty.  Steam Deck's virtual keyboard may not fire onChange on
-    // paste, leaving keyInput stale while the actual <input> holds the
-    // pasted text.
+    const [displayMask, setDisplayMask] = SP_REACT.useState("");
+    const inputRef = SP_REACT.useRef(null);
+    // Backing store that always holds the latest value regardless of
+    // whether React state or DOM events fired correctly.
+    const latestValueRef = SP_REACT.useRef("");
+    // Attach native DOM event listeners that bypass React's synthetic
+    // event system.  Steam Deck's virtual keyboard may only fire native
+    // events, not React onChange.  We also poll periodically as a final
+    // safety net in case even native events are unreliable.
+    SP_REACT.useEffect(() => {
+        const el = inputRef.current;
+        if (!el)
+            return;
+        const sync = () => {
+            const v = el.value || "";
+            latestValueRef.current = v;
+            setDisplayMask(v ? "•".repeat(Math.min(v.length, 32)) : "");
+        };
+        el.addEventListener("input", sync);
+        el.addEventListener("change", sync);
+        el.addEventListener("keyup", sync);
+        // Poll every 400ms to catch virtual-keyboard edits that fire no events.
+        const timer = setInterval(sync, 400);
+        return () => {
+            el.removeEventListener("input", sync);
+            el.removeEventListener("change", sync);
+            el.removeEventListener("keyup", sync);
+            clearInterval(timer);
+        };
+    }, []);
     const getInputValue = () => {
-        if (keyInput.trim())
-            return keyInput.trim();
-        if (inputValueRef.current.trim())
-            return inputValueRef.current.trim();
-        try {
-            const el = fieldRef.current?.querySelector("input");
-            if (el?.value?.trim())
-                return el.value.trim();
-        }
-        catch (_e) { /* ignore */ }
+        // Primary: read directly from the DOM input element
+        const domVal = inputRef.current?.value?.trim();
+        if (domVal)
+            return domVal;
+        // Fallback: our backing ref
+        if (latestValueRef.current.trim())
+            return latestValueRef.current.trim();
         return "";
     };
-    /** Push a value into both React state, the backing ref, and the DOM input. */
     const setInputValue = (value) => {
-        setKeyInput(value);
-        inputValueRef.current = value;
-        try {
-            const el = fieldRef.current?.querySelector("input");
-            if (el) {
-                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-                if (nativeSetter)
-                    nativeSetter.call(el, value);
-                else
-                    el.value = value;
-                el.dispatchEvent(new Event("input", { bubbles: true }));
-            }
+        latestValueRef.current = value;
+        const el = inputRef.current;
+        if (el) {
+            // Use native setter to guarantee the DOM value updates even if
+            // React's controlled-input logic interferes.
+            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+            if (nativeSetter)
+                nativeSetter.call(el, value);
+            else
+                el.value = value;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
         }
-        catch (_e) { /* ignore */ }
+        setDisplayMask(value ? "•".repeat(Math.min(value.length, 32)) : "");
     };
     const handlePaste = async () => {
         try {
@@ -511,7 +529,7 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
                 toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
             }
             else if (clipboardReadFailed) {
-                toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Please paste your key into the text field manually." });
+                toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Type or paste your key using the on-screen keyboard instead." });
             }
             else {
                 toaster.toast({ title: "Demo Finder", body: "Clipboard appears empty. Copy your key first, then try again." });
@@ -519,18 +537,20 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
         }
         catch (e) {
             console.error("[Demo Finder] Clipboard paste error:", e);
-            toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Please paste your key into the text field manually." });
+            toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Type or paste your key using the on-screen keyboard instead." });
         }
     };
     const handleSave = async () => {
         const value = getInputValue();
+        console.log("[Demo Finder] handleSave: value length =", value.length, "value =", value ? "(present)" : "(empty)");
         if (!value) {
             toaster.toast({ title: "Demo Finder", body: "Please enter an API key first." });
             return;
         }
         setSaving(true);
         try {
-            await setApiKey(value);
+            const result = await setApiKey(value);
+            console.log("[Demo Finder] setApiKey result:", result);
         }
         catch (e) {
             console.error("[Demo Finder] Failed to save API key:", e);
@@ -539,8 +559,7 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
             return;
         }
         toaster.toast({ title: "Demo Finder", body: "API key saved! Refreshing wishlist..." });
-        setKeyInput("");
-        inputValueRef.current = "";
+        setInputValue("");
         try {
             onKeySaved();
         }
@@ -553,47 +572,59 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { title: "Steam API Key Setup", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
                     ? "✅ API key is configured. You can update it below if needed."
-                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyInput, onChange: (e) => {
-                            const v = e?.target?.value ?? "";
-                            setKeyInput(v);
-                            inputValueRef.current = v;
-                        }, bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
+                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", width: "100%" }, children: [SP_JSX.jsx("label", { style: { fontSize: "11px", color: "rgba(255,255,255,0.6)" }, children: "Steam Web API Key" }), SP_JSX.jsx("input", { ref: inputRef, type: "password", placeholder: "Tap here and type or paste your key", autoComplete: "off", style: {
+                                width: "100%", padding: "8px 10px",
+                                background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
+                                borderRadius: "4px", color: "#fff", fontSize: "13px",
+                                outline: "none", boxSizing: "border-box",
+                            } }), displayMask && (SP_JSX.jsxs("div", { style: { fontSize: "10px", color: "rgba(255,255,255,0.4)" }, children: [displayMask.length, " characters entered"] }))] }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
 };
 // ---- SteamGridDB API Key Setup ----
 const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
-    const [keyInput, setKeyInput] = SP_REACT.useState("");
     const [saving, setSaving] = SP_REACT.useState(false);
-    const fieldRef = SP_REACT.useRef(null);
-    const inputValueRef = SP_REACT.useRef("");
+    const [displayMask, setDisplayMask] = SP_REACT.useState("");
+    const inputRef = SP_REACT.useRef(null);
+    const latestValueRef = SP_REACT.useRef("");
+    SP_REACT.useEffect(() => {
+        const el = inputRef.current;
+        if (!el)
+            return;
+        const sync = () => {
+            const v = el.value || "";
+            latestValueRef.current = v;
+            setDisplayMask(v ? "•".repeat(Math.min(v.length, 32)) : "");
+        };
+        el.addEventListener("input", sync);
+        el.addEventListener("change", sync);
+        el.addEventListener("keyup", sync);
+        const timer = setInterval(sync, 400);
+        return () => {
+            el.removeEventListener("input", sync);
+            el.removeEventListener("change", sync);
+            el.removeEventListener("keyup", sync);
+            clearInterval(timer);
+        };
+    }, []);
     const getInputValue = () => {
-        if (keyInput.trim())
-            return keyInput.trim();
-        if (inputValueRef.current.trim())
-            return inputValueRef.current.trim();
-        try {
-            const el = fieldRef.current?.querySelector("input");
-            if (el?.value?.trim())
-                return el.value.trim();
-        }
-        catch (_e) { /* ignore */ }
+        const domVal = inputRef.current?.value?.trim();
+        if (domVal)
+            return domVal;
+        if (latestValueRef.current.trim())
+            return latestValueRef.current.trim();
         return "";
     };
-    /** Push a value into both React state, the backing ref, and the DOM input. */
     const setInputValue = (value) => {
-        setKeyInput(value);
-        inputValueRef.current = value;
-        try {
-            const el = fieldRef.current?.querySelector("input");
-            if (el) {
-                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-                if (nativeSetter)
-                    nativeSetter.call(el, value);
-                else
-                    el.value = value;
-                el.dispatchEvent(new Event("input", { bubbles: true }));
-            }
+        latestValueRef.current = value;
+        const el = inputRef.current;
+        if (el) {
+            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+            if (nativeSetter)
+                nativeSetter.call(el, value);
+            else
+                el.value = value;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
         }
-        catch (_e) { /* ignore */ }
+        setDisplayMask(value ? "•".repeat(Math.min(value.length, 32)) : "");
     };
     const handlePaste = async () => {
         try {
@@ -617,7 +648,7 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
                 toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
             }
             else if (clipboardReadFailed) {
-                toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Please paste your key into the text field manually." });
+                toaster.toast({ title: "Demo Finder", body: "Could not access clipboard. Type or paste your key using the on-screen keyboard instead." });
             }
             else {
                 toaster.toast({ title: "Demo Finder", body: "Clipboard appears empty. Copy your key first, then try again." });
@@ -625,18 +656,20 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
         }
         catch (e) {
             console.error("[Demo Finder] Clipboard paste error:", e);
-            toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Please paste your key into the text field manually." });
+            toaster.toast({ title: "Demo Finder", body: "Could not read clipboard. Type or paste your key using the on-screen keyboard instead." });
         }
     };
     const handleSave = async () => {
         const value = getInputValue();
+        console.log("[Demo Finder] handleSave SGDB: value length =", value.length, "value =", value ? "(present)" : "(empty)");
         if (!value) {
             toaster.toast({ title: "Demo Finder", body: "Please enter a SteamGridDB API key first." });
             return;
         }
         setSaving(true);
         try {
-            await setSgdbApiKey(value);
+            const result = await setSgdbApiKey(value);
+            console.log("[Demo Finder] setSgdbApiKey result:", result);
         }
         catch (e) {
             console.error("[Demo Finder] Failed to save SGDB API key:", e);
@@ -645,8 +678,7 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
             return;
         }
         toaster.toast({ title: "Demo Finder", body: "SteamGridDB API key saved!" });
-        setKeyInput("");
-        inputValueRef.current = "";
+        setInputValue("");
         try {
             onKeySaved();
         }
@@ -670,11 +702,12 @@ const SgdbKeySetup = ({ hasKey, onKeySaved }) => {
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { title: "SteamGridDB API Key", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
                     ? "✅ SteamGridDB key configured. Missing artwork will use SGDB as a fallback."
-                    : "⚠️ Optional: Provide a SteamGridDB API key to fill in missing game artwork." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free SGDB API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: fieldRef, children: SP_JSX.jsx(DFL.TextField, { label: "SteamGridDB API Key", value: keyInput, onChange: (e) => {
-                            const v = e?.target?.value ?? "";
-                            setKeyInput(v);
-                            inputValueRef.current = v;
-                        }, bIsPassword: true }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save SGDB Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Free key available at steamgriddb.com \u2014 provides artwork for games missing images on Steam." })] }));
+                    : "⚠️ Optional: Provide a SteamGridDB API key to fill in missing game artwork." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free SGDB API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "4px", width: "100%" }, children: [SP_JSX.jsx("label", { style: { fontSize: "11px", color: "rgba(255,255,255,0.6)" }, children: "SteamGridDB API Key" }), SP_JSX.jsx("input", { ref: inputRef, type: "password", placeholder: "Tap here and type or paste your key", autoComplete: "off", style: {
+                                width: "100%", padding: "8px 10px",
+                                background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
+                                borderRadius: "4px", color: "#fff", fontSize: "13px",
+                                outline: "none", boxSizing: "border-box",
+                            } }), displayMask && (SP_JSX.jsxs("div", { style: { fontSize: "10px", color: "rgba(255,255,255,0.4)" }, children: [displayMask.length, " characters entered"] }))] }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handlePaste, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaPaste, { size: 12 }), " Paste from Clipboard"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save SGDB Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Free key available at steamgriddb.com \u2014 provides artwork for games missing images on Steam." })] }));
 };
 function detectControllerType(id) {
     const lower = id.toLowerCase();

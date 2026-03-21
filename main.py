@@ -456,25 +456,62 @@ class Plugin:
     async def read_clipboard(self) -> str:
         """Read text from the system clipboard.
 
-        Tries several common clipboard utilities available on Linux /
-        SteamOS so that at least one succeeds regardless of whether the
-        session is Wayland or X11.
+        Tries several clipboard strategies available on Linux / SteamOS
+        so that at least one succeeds regardless of whether the session
+        is Wayland, X11, or KDE Plasma (Desktop Mode).
+
+        Strategy order:
+        1. KDE Klipper via ``qdbus`` / ``gdbus`` (works in Desktop Mode)
+        2. ``wl-paste`` with explicit text type (Wayland / Gamescope)
+        3. ``wl-paste`` primary selection (some apps put text there)
+        4. ``xclip`` / ``xsel`` clipboard and primary selections (X11)
+        5. ``xdotool``-based X selection read as last resort
 
         Uses ``asyncio.create_subprocess_exec`` so that the event loop
-        is never blocked — synchronous ``subprocess.run`` would stall
-        the Decky IPC and cause the frontend callable to time out.
+        is never blocked.
 
         The Decky backend may not inherit the user's display-session
         environment variables, so we detect and inject ``DISPLAY``,
-        ``WAYLAND_DISPLAY`` and ``XDG_RUNTIME_DIR`` when they are
-        missing.
+        ``WAYLAND_DISPLAY``, ``XDG_RUNTIME_DIR`` and
+        ``DBUS_SESSION_BUS_ADDRESS`` when they are missing.
         """
         env = self._build_clipboard_env()
-        for cmd in [
+
+        # Log environment for debugging on first call
+        decky.logger.info(
+            f"read_clipboard env: DISPLAY={env.get('DISPLAY','(unset)')}, "
+            f"WAYLAND_DISPLAY={env.get('WAYLAND_DISPLAY','(unset)')}, "
+            f"XDG_RUNTIME_DIR={env.get('XDG_RUNTIME_DIR','(unset)')}, "
+            f"DBUS_SESSION_BUS_ADDRESS={env.get('DBUS_SESSION_BUS_ADDRESS','(unset)')}"
+        )
+
+        # All clipboard commands to try, in priority order.
+        # Includes both clipboard and primary selections as fallbacks.
+        commands = [
+            # KDE Klipper via qdbus (Steam Deck Desktop Mode)
+            ["qdbus", "org.kde.klipper", "/klipper", "getClipboardContents"],
+            # KDE Klipper via gdbus (alternative D-Bus client)
+            ["gdbus", "call", "--session",
+             "--dest", "org.kde.klipper",
+             "--object-path", "/klipper",
+             "--method", "org.kde.klipper.klipper.getClipboardContents"],
+            # Wayland clipboard (explicit text type)
+            ["wl-paste", "--no-newline", "--type", "text/plain"],
+            # Wayland clipboard (default type)
             ["wl-paste", "--no-newline"],
+            # Wayland primary selection
+            ["wl-paste", "--no-newline", "--primary"],
+            # X11 clipboard selection
             ["xclip", "-selection", "clipboard", "-o"],
+            # X11 primary selection
+            ["xclip", "-selection", "primary", "-o"],
+            # xsel clipboard
             ["xsel", "--clipboard", "--output"],
-        ]:
+            # xsel primary
+            ["xsel", "--primary", "--output"],
+        ]
+
+        for cmd in commands:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -484,7 +521,7 @@ class Plugin:
                 )
                 try:
                     stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=3,
+                        proc.communicate(), timeout=5,
                     )
                 except asyncio.TimeoutError:
                     try:
@@ -497,15 +534,29 @@ class Plugin:
                     )
                     continue
                 if proc.returncode == 0:
-                    return (stdout or b"").decode(errors="replace").strip()
-                decky.logger.debug(
-                    f"read_clipboard: {cmd[0]} exited {proc.returncode}: "
-                    f"{(stderr or b"").decode(errors="replace").strip()}"
-                )
+                    text = (stdout or b"").decode(errors="replace").strip()
+                    # gdbus wraps output in parentheses: ('value',)
+                    if cmd[0] == "gdbus" and text.startswith("('") and text.endswith("',)"):
+                        text = text[2:-3]
+                    if text:
+                        decky.logger.info(
+                            f"read_clipboard: got {len(text)} chars via {cmd[0]}"
+                        )
+                        return text
+                    decky.logger.debug(
+                        f"read_clipboard: {cmd[0]} returned empty"
+                    )
+                else:
+                    decky.logger.debug(
+                        f"read_clipboard: {cmd[0]} exited {proc.returncode}: "
+                        f"{(stderr or b'').decode(errors='replace').strip()}"
+                    )
             except FileNotFoundError:
+                decky.logger.debug(f"read_clipboard: {cmd[0]} not found")
                 continue
             except Exception as e:
                 decky.logger.warning(f"read_clipboard: {cmd[0]} failed: {e}")
+
         decky.logger.warning("read_clipboard: all clipboard tools failed")
         return ""
 
@@ -514,9 +565,10 @@ class Plugin:
         """Return an environment dict suitable for clipboard subprocess calls.
 
         On SteamOS / Steam Deck the Decky backend process often lacks
-        ``DISPLAY``, ``WAYLAND_DISPLAY`` and ``XDG_RUNTIME_DIR``.  We
-        attempt to detect sensible defaults so that ``wl-paste``,
-        ``xclip`` and ``xsel`` can connect to the user's session.
+        ``DISPLAY``, ``WAYLAND_DISPLAY``, ``XDG_RUNTIME_DIR`` and
+        ``DBUS_SESSION_BUS_ADDRESS``.  We attempt to detect sensible
+        defaults so that clipboard tools can connect to the user's
+        session.
         """
         env = os.environ.copy()
 
@@ -530,6 +582,7 @@ class Plugin:
 
         # ---- DISPLAY (X11) ----
         if "DISPLAY" not in env:
+            # Try to discover the active display from X11 sockets
             x11_dir = "/tmp/.X11-unix"
             if os.path.isdir(x11_dir):
                 try:
@@ -553,6 +606,46 @@ class Plugin:
                             env["WAYLAND_DISPLAY"] = name
                             break
                 except OSError:
+                    pass
+
+        # ---- DBUS_SESSION_BUS_ADDRESS ----
+        # Many clipboard tools (qdbus, gdbus, xclip) need the D-Bus
+        # session bus to communicate with the clipboard owner.  The
+        # Decky backend usually lacks this variable.
+        if "DBUS_SESSION_BUS_ADDRESS" not in env:
+            xdg = env.get("XDG_RUNTIME_DIR", "")
+            # Prefer the well-known bus socket path
+            if xdg:
+                bus_path = os.path.join(xdg, "bus")
+                if os.path.exists(bus_path):
+                    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+            # Fallback: scan /proc for a running user process that
+            # has the variable (e.g. Steam, KDE, etc.)
+            if "DBUS_SESSION_BUS_ADDRESS" not in env:
+                try:
+                    target_uid = os.getuid()
+                    if target_uid == 0:
+                        target_uid = 1000  # Steam Deck default user
+                    for pid_name in os.listdir("/proc"):
+                        if not pid_name.isdigit():
+                            continue
+                        try:
+                            pid_stat = os.stat(f"/proc/{pid_name}")
+                            if pid_stat.st_uid != target_uid:
+                                continue
+                            with open(f"/proc/{pid_name}/environ", "rb") as f:
+                                environ_data = f.read()
+                            for entry in environ_data.split(b"\x00"):
+                                if entry.startswith(b"DBUS_SESSION_BUS_ADDRESS="):
+                                    val = entry.split(b"=", 1)[1].decode(errors="replace")
+                                    if val:
+                                        env["DBUS_SESSION_BUS_ADDRESS"] = val
+                                        break
+                        except (OSError, PermissionError):
+                            continue
+                        if "DBUS_SESSION_BUS_ADDRESS" in env:
+                            break
+                except Exception:
                     pass
 
         return env
