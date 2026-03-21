@@ -185,16 +185,9 @@ const fullPageCardBodyStyle: React.CSSProperties = {
   padding: "4px 8px", flex: 1,
   display: "flex", flexDirection: "row", gap: "6px",
   alignItems: "center",
-  marginTop: "-5%",
+  marginTop: "-2%",
 };
 
-const fullPageCardNameStyle: React.CSSProperties = {
-  fontSize: "12px", fontWeight: "bold",
-  overflow: "hidden", textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  flex: 1, minWidth: 0,
-  lineHeight: "1.3",
-};
 
 const fullPageDemoBadgeStyle: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: "3px",
@@ -1161,7 +1154,6 @@ const FullPageWishlistWithDemos: FC = () => {
                 <FaGamepad size={20} style={{ opacity: 0.3 }} />
               </div>
               <div style={fullPageCardBodyStyle}>
-                <div style={fullPageCardNameStyle} title={item.name}>{item.name}</div>
                 {item.demoInfo ? (
                   item.demoInfo.has_demo ? (
                     <Focusable
