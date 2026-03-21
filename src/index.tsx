@@ -15,7 +15,7 @@ import {
   routerHook,
 } from "@decky/api";
 import { useState, useEffect, useCallback, useRef, Fragment, FC, useMemo } from "react";
-import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown, FaChevronDown, FaChevronUp } from "react-icons/fa";
+import { FaGamepad, FaSearch, FaExternalLinkAlt, FaSyncAlt, FaKey, FaSortAlphaDown, FaChevronDown, FaChevronUp, FaPaste } from "react-icons/fa";
 
 // ---- Backend callables ----
 const getWishlist = callable<[steam_id: string], WishlistItem[] | string>("get_wishlist");
@@ -29,6 +29,7 @@ const setSgdbApiKey = callable<[api_key: string], boolean>("set_sgdb_api_key");
 const getSgdbApiKey = callable<[], string>("get_sgdb_api_key");
 const fetchSgdbImagesBatch = callable<[appids: number[]], Record<string, string | null>>("fetch_sgdb_images_batch");
 const openUrlInBrowser = callable<[url: string], boolean>("open_url_in_browser");
+const readClipboard = callable<[], string>("read_clipboard");
 
 // ---- Types ----
 interface WishlistItem {
@@ -456,6 +457,26 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
     return "";
   };
 
+  const handlePaste = async () => {
+    try {
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (_e) { /* browser API unavailable */ }
+      if (!text) {
+        try { text = await readClipboard(); } catch (_e) { /* backend fallback failed */ }
+      }
+      if (text?.trim()) {
+        setKeyInput(text.trim());
+        toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
+      } else {
+        toaster.toast({ title: "Demo Finder", body: "Clipboard is empty." });
+      }
+    } catch (_e) {
+      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard." });
+    }
+  };
+
   const handleSave = async () => {
     const value = getInputValue();
     if (!value) {
@@ -505,6 +526,13 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         </div>
       </PanelSectionRow>
       <PanelSectionRow>
+        <ButtonItem layout="below" onClick={handlePaste}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+            <FaPaste size={12} /> Paste from Clipboard
+          </div>
+        </ButtonItem>
+      </PanelSectionRow>
+      <PanelSectionRow>
         <ButtonItem layout="below" onClick={handleSave} disabled={saving}>
           {saving ? "Saving..." : "Save API Key"}
         </ButtonItem>
@@ -531,6 +559,26 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
       if (el?.value?.trim()) return el.value.trim();
     } catch (_e) { /* ignore */ }
     return "";
+  };
+
+  const handlePaste = async () => {
+    try {
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (_e) { /* browser API unavailable */ }
+      if (!text) {
+        try { text = await readClipboard(); } catch (_e) { /* backend fallback failed */ }
+      }
+      if (text?.trim()) {
+        setKeyInput(text.trim());
+        toaster.toast({ title: "Demo Finder", body: "Pasted from clipboard." });
+      } else {
+        toaster.toast({ title: "Demo Finder", body: "Clipboard is empty." });
+      }
+    } catch (_e) {
+      toaster.toast({ title: "Demo Finder", body: "Could not read clipboard." });
+    }
   };
 
   const handleSave = async () => {
@@ -589,6 +637,13 @@ const SgdbKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey,
             bIsPassword={true}
           />
         </div>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={handlePaste}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+            <FaPaste size={12} /> Paste from Clipboard
+          </div>
+        </ButtonItem>
       </PanelSectionRow>
       <PanelSectionRow>
         <ButtonItem layout="below" onClick={handleSave} disabled={saving}>
