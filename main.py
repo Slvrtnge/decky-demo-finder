@@ -967,6 +967,7 @@ class Plugin:
                         "app_url": f"https://store.steampowered.com/app/{aid}/",
                         "release_date": None,
                         "name": None,
+                        "header_image": None,
                         "definitive": False,
                     }
 
@@ -1007,6 +1008,7 @@ class Plugin:
                     "app_url": f"https://store.steampowered.com/app/{appid}/",
                     "release_date": None,
                     "name": None,
+                    "header_image": None,
                     "definitive": False,
                 }
 

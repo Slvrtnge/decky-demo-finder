@@ -221,6 +221,8 @@ let cachedFilterDemoOnly = false;
 let cachedDemoResults: Record<string, DemoInfo> = {};
 let cachedDemoCacheLoaded = false;
 let cachedSortBy: SortMode = "alpha";
+/** Capsule / header image URLs harvested from Steam wishlistdata. */
+let capsuleImageCache: Record<string, string> = {};
 
 // ---- Helpers ----
 function getSteamId(): string {
@@ -335,9 +337,16 @@ async function resolveNamesViaWishlistData(steamId: string): Promise<Record<stri
       }
       for (const [appidStr, info] of Object.entries(data)) {
         if (info && typeof info === "object" && !Array.isArray(info)) {
-          const name = (info as Record<string, unknown>).name;
+          const rec = info as Record<string, unknown>;
+          const name = rec.name;
           if (typeof name === "string" && name) {
             names[appidStr] = name;
+          }
+          // Harvest capsule image URL so the full-page view has an image
+          // source available even before a demo scan is performed.
+          const capsule = rec.capsule;
+          if (typeof capsule === "string" && capsule) {
+            capsuleImageCache[appidStr] = capsule;
           }
         }
       }
@@ -721,26 +730,31 @@ const FullPageWishlistWithDemos: FC = () => {
               onActivate={() => openGame(item.appid, item.name)}
             >
               <img
-                src={item.demoInfo?.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`}
+                src={item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`}
                 alt={item.name}
                 style={fullPageCardImgStyle}
                 onError={(e) => {
                   const img = e.currentTarget as HTMLImageElement;
                   const cdnBase = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/`;
                   const sharedBase = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
-                  if (!img.src.includes(cdnBase) && !img.src.includes(sharedBase)) {
-                    // header_image from API failed – try CDN header.jpg
-                    img.src = `${cdnBase}header.jpg`;
-                  } else if (img.src.includes("header.jpg") && img.src.includes(cdnBase)) {
-                    img.src = `${cdnBase}capsule_616x353.jpg`;
-                  } else if (img.src.includes("capsule_616x353.jpg")) {
-                    img.src = `${cdnBase}library_600x900.jpg`;
-                  } else if (img.src.includes("library_600x900.jpg")) {
-                    img.src = `${cdnBase}capsule_231x87.jpg`;
-                  } else if (img.src.includes("capsule_231x87.jpg")) {
-                    img.src = `${sharedBase}header.jpg`;
+                  const fallbacks = [
+                    `${cdnBase}header.jpg`,
+                    `${sharedBase}header.jpg`,
+                    `${cdnBase}capsule_616x353.jpg`,
+                    `${sharedBase}capsule_616x353.jpg`,
+                    `${cdnBase}library_600x900.jpg`,
+                    `${cdnBase}capsule_231x87.jpg`,
+                    `${sharedBase}capsule_231x87.jpg`,
+                  ];
+                  let next = parseInt(img.dataset.fbIdx ?? "-1", 10) + 1;
+                  // Skip any fallback whose base URL matches the currently-failed src
+                  const curBase = img.src.split("?")[0];
+                  while (next < fallbacks.length && curBase === fallbacks[next]) next++;
+                  if (next < fallbacks.length) {
+                    img.dataset.fbIdx = String(next);
+                    img.src = fallbacks[next];
                   } else {
-                    // All image URLs failed – hide the broken image and show the alt text background
+                    // All image URLs exhausted – show placeholder
                     img.style.display = "none";
                     const placeholder = img.parentElement?.querySelector(".img-placeholder") as HTMLElement | null;
                     if (placeholder) placeholder.style.display = "flex";

@@ -254,6 +254,8 @@ let cachedFilterDemoOnly = false;
 let cachedDemoResults = {};
 let cachedDemoCacheLoaded = false;
 let cachedSortBy = "alpha";
+/** Capsule / header image URLs harvested from Steam wishlistdata. */
+let capsuleImageCache = {};
 // ---- Helpers ----
 function getSteamId() {
     try {
@@ -365,9 +367,16 @@ async function resolveNamesViaWishlistData(steamId) {
             }
             for (const [appidStr, info] of Object.entries(data)) {
                 if (info && typeof info === "object" && !Array.isArray(info)) {
-                    const name = info.name;
+                    const rec = info;
+                    const name = rec.name;
                     if (typeof name === "string" && name) {
                         names[appidStr] = name;
+                    }
+                    // Harvest capsule image URL so the full-page view has an image
+                    // source available even before a demo scan is performed.
+                    const capsule = rec.capsule;
+                    if (typeof capsule === "string" && capsule) {
+                        capsuleImageCache[appidStr] = capsule;
                     }
                 }
             }
@@ -606,28 +615,30 @@ const FullPageWishlistWithDemos = () => {
             toaster.toast({ title: "Demo Finder", body: `Opening demo for ${gameName}` });
         }
     };
-    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsxs(DFL.Focusable, { style: fullPageButtonGroupStyle, "flow-children": "horizontal", children: [SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[sortBy]] }) }), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) })] }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs(DFL.Focusable, { style: fullPageGridStyle, "flow-children": "grid", children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: item.demoInfo?.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
+    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsxs(DFL.Focusable, { style: fullPageButtonGroupStyle, "flow-children": "horizontal", children: [SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[sortBy]] }) }), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) })] }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs(DFL.Focusable, { style: fullPageGridStyle, "flow-children": "grid", children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
                                     const img = e.currentTarget;
                                     const cdnBase = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/`;
                                     const sharedBase = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
-                                    if (!img.src.includes(cdnBase) && !img.src.includes(sharedBase)) {
-                                        // header_image from API failed – try CDN header.jpg
-                                        img.src = `${cdnBase}header.jpg`;
-                                    }
-                                    else if (img.src.includes("header.jpg") && img.src.includes(cdnBase)) {
-                                        img.src = `${cdnBase}capsule_616x353.jpg`;
-                                    }
-                                    else if (img.src.includes("capsule_616x353.jpg")) {
-                                        img.src = `${cdnBase}library_600x900.jpg`;
-                                    }
-                                    else if (img.src.includes("library_600x900.jpg")) {
-                                        img.src = `${cdnBase}capsule_231x87.jpg`;
-                                    }
-                                    else if (img.src.includes("capsule_231x87.jpg")) {
-                                        img.src = `${sharedBase}header.jpg`;
+                                    const fallbacks = [
+                                        `${cdnBase}header.jpg`,
+                                        `${sharedBase}header.jpg`,
+                                        `${cdnBase}capsule_616x353.jpg`,
+                                        `${sharedBase}capsule_616x353.jpg`,
+                                        `${cdnBase}library_600x900.jpg`,
+                                        `${cdnBase}capsule_231x87.jpg`,
+                                        `${sharedBase}capsule_231x87.jpg`,
+                                    ];
+                                    let next = parseInt(img.dataset.fbIdx ?? "-1", 10) + 1;
+                                    // Skip any fallback whose base URL matches the currently-failed src
+                                    const curBase = img.src.split("?")[0];
+                                    while (next < fallbacks.length && curBase === fallbacks[next])
+                                        next++;
+                                    if (next < fallbacks.length) {
+                                        img.dataset.fbIdx = String(next);
+                                        img.src = fallbacks[next];
                                     }
                                     else {
-                                        // All image URLs failed – hide the broken image and show the alt text background
+                                        // All image URLs exhausted – show placeholder
                                         img.style.display = "none";
                                         const placeholder = img.parentElement?.querySelector(".img-placeholder");
                                         if (placeholder)
