@@ -201,7 +201,7 @@ const fullPageActiveBtnStyle = {
 };
 const fullPageGridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(186px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
     gap: "12px", padding: "16px 24px 24px 24px",
     overflowY: "auto", flex: 1,
     minHeight: 0,
@@ -458,12 +458,22 @@ async function resolveImagelessGames(items, setCacheVersion) {
                     console.log(`[Demo Finder] Image resolution: resolved header_image for ${item.appid}`);
                     return;
                 }
+                // Try first screenshot thumbnail from appdetails as a fallback
+                const screenshots = details.screenshots;
+                if (screenshots && screenshots.length > 0) {
+                    const thumb = screenshots[0].path_thumbnail || screenshots[0].path_full;
+                    if (thumb) {
+                        capsuleImageCache[String(item.appid)] = thumb;
+                        resolved++;
+                        console.log(`[Demo Finder] Image resolution: using screenshot thumbnail for ${item.appid}`);
+                        return;
+                    }
+                }
                 // Try constructing a direct header.jpg URL from the Fastly CDN (always 460×215)
                 const fastlyHeaderUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/header.jpg`;
                 capsuleImageCache[String(item.appid)] = fastlyHeaderUrl;
                 resolved++;
                 console.log(`[Demo Finder] Image resolution: using Fastly header.jpg for ${item.appid}`);
-                // Keep screenshot thumbnails as a last resort (handled by onError fallback chain)
             }
             catch (e) {
                 console.warn(`[Demo Finder] Image resolution: fetchNoCors failed for ${item.appid}:`, e);
