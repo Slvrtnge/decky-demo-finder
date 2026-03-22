@@ -319,6 +319,9 @@ class Plugin:
 
     async def open_url_in_browser(self, url: str) -> bool:
         """Open a URL in the system's default external browser."""
+        if not url or not url.startswith(("https://", "http://")):
+            decky.logger.warning(f"open_url_in_browser blocked non-HTTP URL: {url!r}")
+            return False
         try:
             proc = await asyncio.create_subprocess_exec(
                 "xdg-open", url,
