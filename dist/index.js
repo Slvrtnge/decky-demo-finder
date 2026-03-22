@@ -215,7 +215,7 @@ const fullPageCardStyle = {
     display: "flex", flexDirection: "column",
 };
 const fullPageCardImgStyle = {
-    width: "100%", height: "100%",
+    width: "100%", height: "auto",
     aspectRatio: "460 / 215",
     objectFit: "cover", display: "block",
     background: "rgba(0,0,0,0.3)",
@@ -458,13 +458,12 @@ async function resolveImagelessGames(items, setCacheVersion) {
                     console.log(`[Demo Finder] Image resolution: resolved header_image for ${item.appid}`);
                     return;
                 }
-                // Fall back to first screenshot thumbnail
-                const screenshots = details.screenshots ?? [];
-                if (screenshots.length > 0 && screenshots[0].path_thumbnail) {
-                    capsuleImageCache[String(item.appid)] = screenshots[0].path_thumbnail;
-                    resolved++;
-                    console.log(`[Demo Finder] Image resolution: resolved screenshot thumbnail for ${item.appid}`);
-                }
+                // Try constructing a direct header.jpg URL from the Fastly CDN (always 460×215)
+                const fastlyHeaderUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/header.jpg`;
+                capsuleImageCache[String(item.appid)] = fastlyHeaderUrl;
+                resolved++;
+                console.log(`[Demo Finder] Image resolution: using Fastly header.jpg for ${item.appid}`);
+                // Keep screenshot thumbnails as a last resort (handled by onError fallback chain)
             }
             catch (e) {
                 console.warn(`[Demo Finder] Image resolution: fetchNoCors failed for ${item.appid}:`, e);
@@ -814,7 +813,9 @@ const FullPageWishlistWithDemos = () => {
                                     const cdnBase = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/`;
                                     const sharedBase = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
                                     const cfBase = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appid}/`;
+                                    const fastlyBase = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
                                     const fallbacks = [
+                                        `${fastlyBase}header.jpg`,
                                         `${cdnBase}header.jpg`,
                                         `${sharedBase}header.jpg`,
                                         `${cfBase}header.jpg`,
