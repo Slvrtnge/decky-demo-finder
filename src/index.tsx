@@ -25,6 +25,7 @@ const getApiKey = callable<[], string>("get_api_key");
 const resolveNamesBatch = callable<[appids: number[]], Record<string, string>>("resolve_names_batch");
 const saveDemoCache = callable<[cache_data: Record<string, DemoInfo>], boolean>("save_demo_cache");
 const loadDemoCache = callable<[], Record<string, DemoInfo>>("load_demo_cache");
+const openUrlInBrowser = callable<[url: string], boolean>("open_url_in_browser");
 
 
 // ---- Types ----
@@ -535,7 +536,15 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
     setSaving(false);
   };
 
-  const openKeyPage = () => {
+  const openKeyPage = async () => {
+    try {
+      const opened = await openUrlInBrowser(API_KEY_HELP_URL);
+      if (opened) {
+        toaster.toast({ title: "Demo Finder", body: "Opening API key page in system browser." });
+        return;
+      }
+    } catch (_e) { /* fall through to client-side attempts */ }
+
     const steamClient = (window as any).SteamClient;
     if (steamClient?.System?.OpenInSystemBrowser) {
       steamClient.System.OpenInSystemBrowser(API_KEY_HELP_URL);
