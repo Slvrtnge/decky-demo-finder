@@ -178,6 +178,13 @@ const fullPageCardImgStyle: React.CSSProperties = {
   background: "rgba(0,0,0,0.3)",
 };
 
+/** Style variant for fallback-resolved images: uses contain instead of cover to avoid cropping. */
+const fallbackCardImgStyle: React.CSSProperties = {
+  ...fullPageCardImgStyle,
+  objectFit: "contain",
+  background: "rgba(0,0,0,0.5)",
+};
+
 const fullPageCardBodyStyle: React.CSSProperties = {
   padding: "4px 8px", flex: 1,
   display: "flex", flexDirection: "row", gap: "6px",
@@ -222,6 +229,8 @@ let cachedDemoCacheLoaded = false;
 let cachedSortBy: SortMode = "alpha";
 /** Capsule / header image URLs harvested from Steam wishlistdata. */
 let capsuleImageCache: Record<string, string> = {};
+/** Track appids whose images were resolved via fallback (not from regular wishlistdata capsule). */
+const fallbackImageAppIds = new Set<string>();
 
 
 // ---- Helpers ----
@@ -428,6 +437,7 @@ async function resolveImagelessGames(
           const headerImage: string | undefined = details.header_image;
           if (headerImage) {
             capsuleImageCache[String(item.appid)] = headerImage;
+            fallbackImageAppIds.add(String(item.appid));
             resolved++;
             console.log(`[Demo Finder] Image resolution: resolved header_image for ${item.appid}`);
             return;
@@ -438,6 +448,7 @@ async function resolveImagelessGames(
             const thumb = screenshots[0].path_thumbnail || screenshots[0].path_full;
             if (thumb) {
               capsuleImageCache[String(item.appid)] = thumb;
+              fallbackImageAppIds.add(String(item.appid));
               resolved++;
               console.log(`[Demo Finder] Image resolution: using screenshot thumbnail for ${item.appid}`);
               return;
@@ -446,6 +457,7 @@ async function resolveImagelessGames(
           // Try constructing a direct header.jpg URL from the Fastly CDN (always 460×215)
           const fastlyHeaderUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/header.jpg`;
           capsuleImageCache[String(item.appid)] = fastlyHeaderUrl;
+          fallbackImageAppIds.add(String(item.appid));
           resolved++;
           console.log(`[Demo Finder] Image resolution: using Fastly header.jpg for ${item.appid}`);
         } catch (e) {
@@ -975,7 +987,16 @@ const FullPageWishlistWithDemos: FC = () => {
               <img
                 src={item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`}
                 alt={item.name}
-                style={fullPageCardImgStyle}
+                style={fallbackImageAppIds.has(String(item.appid)) ? fallbackCardImgStyle : fullPageCardImgStyle}
+                onLoad={(e) => {
+                  // Covers the onError CDN fallback path: when the initial src failed and a
+                  // fallback URL was set (data-fallback="true"), apply containment on load.
+                  const img = e.currentTarget as HTMLImageElement;
+                  if (img.dataset.fallback === "true") {
+                    img.style.objectFit = "contain";
+                    img.style.background = "rgba(0,0,0,0.5)";
+                  }
+                }}
                 onError={(e) => {
                   const img = e.currentTarget as HTMLImageElement;
                   const cdnBase = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/`;
@@ -1008,6 +1029,7 @@ const FullPageWishlistWithDemos: FC = () => {
                   while (next < fallbacks.length && curBase === fallbacks[next]) next++;
                   if (next < fallbacks.length) {
                     img.dataset.fbIdx = String(next);
+                    img.dataset.fallback = "true";
                     img.src = fallbacks[next];
                   } else {
                     // All Steam CDN URLs exhausted — show placeholder
