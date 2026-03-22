@@ -399,9 +399,9 @@ async function resolveNamesViaDemoBatch(items: WishlistItem[]): Promise<Wishlist
 
 /**
  * For games that ended up with no image after a scan (demoInfo.header_image is
- * null/empty and capsuleImageCache has no entry), use Decky's fetchNoCors
- * (which proxies through the user's authenticated Steam session) to call
- * appdetails and extract header_image or the first screenshot thumbnail.
+ * null/empty and capsuleImageCache has no entry), construct the official Steam
+ * wide capsule URL (capsule_616x353.jpg) directly. This image matches the card
+ * aspect ratio and scales correctly with objectFit: "cover".
  * Results are written into capsuleImageCache so the grid re-renders with images.
  *
  * @param items - The full wishlist after scanning.
@@ -416,63 +416,20 @@ async function resolveImagelessGames(
   );
   if (imageless.length === 0) return 0;
 
-  console.log(`[Demo Finder] Image resolution pass: ${imageless.length} games have no image, fetching via fetchNoCors`);
+  console.log(`[Demo Finder] Image resolution pass: ${imageless.length} games have no image, using wide capsule URLs`);
 
-  const BATCH = 4;
-  const DELAY_MS = 1500;
   let resolved = 0;
 
-  for (let i = 0; i < imageless.length; i += BATCH) {
-    const batch = imageless.slice(i, i + BATCH);
-    await Promise.all(
-      batch.map(async (item) => {
-        try {
-          const url = `https://store.steampowered.com/api/appdetails?appids=${item.appid}&cc=us&l=english`;
-          const resp = await fetchNoCors(url, { headers: { "Accept": "application/json" } });
-          if (!resp.ok) return;
-          const data = await resp.json();
-          const appEntry = data?.[String(item.appid)];
-          if (!appEntry?.success) return;
-          const details = appEntry.data ?? {};
-          const headerImage: string | undefined = details.header_image;
-          if (headerImage) {
-            capsuleImageCache[String(item.appid)] = headerImage;
-            fallbackImageAppIds.add(String(item.appid));
-            resolved++;
-            console.log(`[Demo Finder] Image resolution: resolved header_image for ${item.appid}`);
-            return;
-          }
-          // Try first screenshot thumbnail from appdetails as a fallback
-          const screenshots: { path_thumbnail?: string; path_full?: string }[] | undefined = details.screenshots;
-          if (screenshots && screenshots.length > 0) {
-            const thumb = screenshots[0].path_thumbnail || screenshots[0].path_full;
-            if (thumb) {
-              capsuleImageCache[String(item.appid)] = thumb;
-              fallbackImageAppIds.add(String(item.appid));
-              resolved++;
-              console.log(`[Demo Finder] Image resolution: using screenshot thumbnail for ${item.appid}`);
-              return;
-            }
-          }
-          // Try constructing a direct header.jpg URL from the Fastly CDN (always 460×215)
-          const fastlyHeaderUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/header.jpg`;
-          capsuleImageCache[String(item.appid)] = fastlyHeaderUrl;
-          fallbackImageAppIds.add(String(item.appid));
-          resolved++;
-          console.log(`[Demo Finder] Image resolution: using Fastly header.jpg for ${item.appid}`);
-        } catch (e) {
-          console.warn(`[Demo Finder] Image resolution: fetchNoCors failed for ${item.appid}:`, e);
-        }
-      }),
-    );
-    // Trigger re-render after each batch so images appear incrementally
-    setCacheVersion((v) => v + 1);
-    if (i + BATCH < imageless.length) {
-      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
-    }
+  for (const item of imageless) {
+    const capsuleUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/capsule_616x353.jpg`;
+    capsuleImageCache[String(item.appid)] = capsuleUrl;
+    resolved++;
   }
 
-  console.log(`[Demo Finder] Image resolution pass complete: recovered ${resolved}/${imageless.length} images`);
+  // Trigger re-render so images appear
+  setCacheVersion((v) => v + 1);
+
+  console.log(`[Demo Finder] Image resolution pass complete: set wide capsule URL for ${resolved}/${imageless.length} games`);
   return resolved;
 }
 
@@ -1004,12 +961,13 @@ const FullPageWishlistWithDemos: FC = () => {
                   const cfBase = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appid}/`;
                   const fastlyBase = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
                   const fallbacks = [
+                    `${fastlyBase}capsule_616x353.jpg`,
+                    `${cdnBase}capsule_616x353.jpg`,
+                    `${sharedBase}capsule_616x353.jpg`,
                     `${fastlyBase}header.jpg`,
                     `${cdnBase}header.jpg`,
                     `${sharedBase}header.jpg`,
                     `${cfBase}header.jpg`,
-                    `${cdnBase}capsule_616x353.jpg`,
-                    `${sharedBase}capsule_616x353.jpg`,
                     `${cdnBase}library_600x900.jpg`,
                     `${sharedBase}library_600x900.jpg`,
                     `${cdnBase}hero_capsule.jpg`,
