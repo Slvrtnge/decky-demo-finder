@@ -352,11 +352,14 @@ async function resolveNamesViaWishlistData(steamId: string): Promise<Record<stri
           if (typeof name === "string" && name) {
             names[appidStr] = name;
           }
-          // Harvest capsule image URL so the full-page view has an image
-          // source available even before a demo scan is performed.
-          const capsule = rec.capsule;
-          if (typeof capsule === "string" && capsule) {
-            capsuleImageCache[appidStr] = capsule;
+          // Harvest capsule image so the full-page view has an image source
+          // available even before a demo scan is performed.
+          // The wishlistdata "capsule" field returns a small portrait image
+          // which doesn't fit the 460/215 landscape card layout. Use
+          // capsule_616x353.jpg instead, matching the backend scanner and
+          // resolveImagelessGames() which also use this wide landscape URL.
+          if (rec.capsule) {
+            capsuleImageCache[appidStr] = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${appidStr}/capsule_616x353.jpg`;
           }
         }
       }
