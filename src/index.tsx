@@ -156,7 +156,7 @@ const fullPageActiveBtnStyle: React.CSSProperties = {
 
 const fullPageGridStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fill, minmax(186px, 1fr))",
   gap: "12px", padding: "16px 24px 24px 24px",
   overflowY: "auto", flex: 1,
   minHeight: 0,
