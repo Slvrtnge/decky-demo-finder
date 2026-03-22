@@ -347,13 +347,11 @@ async function resolveNamesViaWishlistData(steamId: string): Promise<Record<stri
           }
           // Harvest capsule image so the full-page view has an image source
           // available even before a demo scan is performed.
-          // The wishlistdata "capsule" field returns a small portrait image
-          // which doesn't fit the 460/215 landscape card layout. Use
-          // capsule_616x353.jpg instead, matching the backend scanner and
-          // resolveImagelessGames() which also use this wide landscape URL.
-          if (rec.capsule) {
-            capsuleImageCache[appidStr] = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${appidStr}/capsule_616x353.jpg`;
-          }
+          // The URL is deterministic (appid only) so always write it regardless
+          // of whether wishlistdata includes a "capsule" field. Games without
+          // that field (new/unlisted/pre-release titles) would otherwise get
+          // skipped, leaving them imageless until resolveImagelessGames runs.
+          capsuleImageCache[appidStr] = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${appidStr}/capsule_616x353.jpg`;
         }
       }
     }
@@ -954,7 +952,7 @@ const FullPageWishlistWithDemos: FC = () => {
               onActivate={() => openGame(item.appid, item.name)}
             >
               <img
-                src={item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`}
+                src={item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/capsule_616x353.jpg`}
                 alt={item.name}
                 style={fullPageCardImgStyle}
                 onLoad={(e) => {
@@ -1350,6 +1348,12 @@ function Content() {
       } finally {
         setResolvingNames(false);
       }
+
+      // After names are resolved, run an image resolution pass so cards on the
+      // full-page view have images immediately — before a demo scan completes.
+      resolveImagelessGames(resolvedItems, setCacheVersion).catch((e) =>
+        console.warn("[Demo Finder] Post-load image resolution pass failed:", e),
+      );
 
       // After wishlist is fully loaded and names are resolved:
       // apply cached demo results (if any), otherwise auto-scan.
