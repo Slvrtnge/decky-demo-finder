@@ -959,8 +959,18 @@ const FullPageWishlistWithDemos: FC = () => {
                   const img = e.currentTarget as HTMLImageElement;
                   // Always restore visibility (may have been hidden by a previous exhausted onError chain)
                   img.style.display = "block";
-                  img.style.objectFit = "cover";
                   img.style.background = "rgba(0,0,0,0.3)";
+                  // Check aspect ratio: card is ~2.14:1 (460/215). If loaded image
+                  // is too portrait (< 1.2) or too ultra-wide (> 3.0), use "contain"
+                  // to avoid severe cropping. Otherwise use "cover" for a clean fill.
+                  const ratio = img.naturalWidth > 0 && img.naturalHeight > 0
+                    ? img.naturalWidth / img.naturalHeight
+                    : 2.14;
+                  if (ratio < 1.2 || ratio > 3.0) {
+                    img.style.objectFit = "contain";
+                  } else {
+                    img.style.objectFit = "cover";
+                  }
                   // Hide placeholder if it was shown
                   const placeholder = img.parentElement?.querySelector(".img-placeholder") as HTMLElement | null;
                   if (placeholder) placeholder.style.display = "none";
@@ -975,25 +985,30 @@ const FullPageWishlistWithDemos: FC = () => {
                   const cfBase = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appid}/`;
                   const fastlyBase = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
                   const fallbacks = [
+                    // Landscape capsule — ideal 616x353 (~1.75:1)
                     `${fastlyBase}capsule_616x353.jpg`,
                     `${cdnBase}capsule_616x353.jpg`,
                     `${sharedBase}capsule_616x353.jpg`,
+                    // header.jpg — 460x215, perfect match for card ratio
                     `${fastlyBase}header.jpg`,
                     `${cdnBase}header.jpg`,
                     `${sharedBase}header.jpg`,
                     `${cfBase}header.jpg`,
-                    `${cdnBase}library_600x900.jpg`,
-                    `${sharedBase}library_600x900.jpg`,
-                    `${cdnBase}hero_capsule.jpg`,
-                    `${sharedBase}hero_capsule.jpg`,
+                    // Small landscape capsules — correct ratio, just lower resolution
                     `${cdnBase}header_292x136.jpg`,
                     `${sharedBase}header_292x136.jpg`,
-                    `${cdnBase}library_hero.jpg`,
-                    `${sharedBase}library_hero.jpg`,
                     `${cdnBase}capsule_231x87.jpg`,
                     `${sharedBase}capsule_231x87.jpg`,
                     `${cdnBase}capsule_sm_120.jpg`,
                     `${sharedBase}capsule_sm_120.jpg`,
+                    // hero_capsule — varies, but often close enough to landscape
+                    `${cdnBase}hero_capsule.jpg`,
+                    `${sharedBase}hero_capsule.jpg`,
+                    // Last resort: portrait/ultra-wide images that will use objectFit:contain
+                    `${cdnBase}library_600x900.jpg`,
+                    `${sharedBase}library_600x900.jpg`,
+                    `${cdnBase}library_hero.jpg`,
+                    `${sharedBase}library_hero.jpg`,
                   ];
                   let next = parseInt(img.dataset.fbIdx ?? "-1", 10) + 1;
                   // Skip any fallback whose base URL matches the currently-failed src

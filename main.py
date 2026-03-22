@@ -731,12 +731,14 @@ class Plugin:
 
                     details = app_data.get("data", {})
 
-                    # Use the official wide capsule image (matches card aspect ratio)
-                    result["header_image"] = (
-                        f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg"
-                    )
-
-                    # Extract release date
+                    # Prefer Steam's actual header_image; fall back to constructed capsule URL
+                    api_header = details.get("header_image")
+                    if api_header:
+                        result["header_image"] = api_header
+                    else:
+                        result["header_image"] = (
+                            f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg"
+                        )
                     rd = details.get("release_date", {})
                     if rd and rd.get("date"):
                         result["release_date"] = rd["date"]
@@ -852,10 +854,14 @@ class Plugin:
                                 if name:
                                     result["name"] = name
 
-                                # Use the official wide capsule image (matches card aspect ratio)
-                                result["header_image"] = (
-                                    f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg"
-                                )
+                                # Prefer Steam's actual header_image; fall back to constructed capsule URL
+                                api_header = details.get("header_image")
+                                if api_header:
+                                    result["header_image"] = api_header
+                                else:
+                                    result["header_image"] = (
+                                        f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{appid}/capsule_616x353.jpg"
+                                    )
 
                                 rd = details.get("release_date", {})
                                 if rd and rd.get("date"):
