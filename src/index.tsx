@@ -537,10 +537,21 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   };
 
   const openKeyPage = async () => {
+    let opened = false;
     try {
-      await openUrlInBrowser(API_KEY_HELP_URL);
-    } catch (_e) {
-      Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+      opened = await openUrlInBrowser(API_KEY_HELP_URL);
+    } catch (_e) { /* backend call failed */ }
+    if (!opened) {
+      try {
+        const sc = (window as any).SteamClient;
+        if (sc?.System?.OpenInSystemBrowser) {
+          sc.System.OpenInSystemBrowser(API_KEY_HELP_URL);
+        } else {
+          Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+        }
+      } catch (_e) {
+        Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+      }
     }
     Navigation.CloseSideMenus();
   };
