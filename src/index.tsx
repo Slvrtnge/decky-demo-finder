@@ -388,6 +388,73 @@ async function resolveNamesViaDemoBatch(items: WishlistItem[]): Promise<Wishlist
   }
 }
 
+/**
+ * For games that ended up with no image after a scan (demoInfo.header_image is
+ * null/empty and capsuleImageCache has no entry), use Decky's fetchNoCors
+ * (which proxies through the user's authenticated Steam session) to call
+ * appdetails and extract header_image or the first screenshot thumbnail.
+ * Results are written into capsuleImageCache so the grid re-renders with images.
+ *
+ * @param items - The full wishlist after scanning.
+ * @param setCacheVersion - A state setter to trigger re-render after cache updates.
+ */
+async function resolveImagelessGames(
+  items: { appid: number; demoInfo?: DemoInfo | null }[],
+  setCacheVersion: (fn: (v: number) => number) => void,
+): Promise<number> {
+  const imageless = items.filter(
+    (item) => !item.demoInfo?.header_image && !capsuleImageCache[String(item.appid)],
+  );
+  if (imageless.length === 0) return 0;
+
+  console.log(`[Demo Finder] Image resolution pass: ${imageless.length} games have no image, fetching via fetchNoCors`);
+
+  const BATCH = 4;
+  const DELAY_MS = 1500;
+  let resolved = 0;
+
+  for (let i = 0; i < imageless.length; i += BATCH) {
+    const batch = imageless.slice(i, i + BATCH);
+    await Promise.all(
+      batch.map(async (item) => {
+        try {
+          const url = `https://store.steampowered.com/api/appdetails?appids=${item.appid}&cc=us&l=english`;
+          const resp = await fetchNoCors(url, { headers: { "Accept": "application/json" } });
+          if (!resp.ok) return;
+          const data = await resp.json();
+          const appEntry = data?.[String(item.appid)];
+          if (!appEntry?.success) return;
+          const details = appEntry.data ?? {};
+          const headerImage: string | undefined = details.header_image;
+          if (headerImage) {
+            capsuleImageCache[String(item.appid)] = headerImage;
+            resolved++;
+            console.log(`[Demo Finder] Image resolution: resolved header_image for ${item.appid}`);
+            return;
+          }
+          // Fall back to first screenshot thumbnail
+          const screenshots: { path_thumbnail?: string }[] = details.screenshots ?? [];
+          if (screenshots.length > 0 && screenshots[0].path_thumbnail) {
+            capsuleImageCache[String(item.appid)] = screenshots[0].path_thumbnail;
+            resolved++;
+            console.log(`[Demo Finder] Image resolution: resolved screenshot thumbnail for ${item.appid}`);
+          }
+        } catch (e) {
+          console.warn(`[Demo Finder] Image resolution: fetchNoCors failed for ${item.appid}:`, e);
+        }
+      }),
+    );
+    // Trigger re-render after each batch so images appear incrementally
+    setCacheVersion((v) => v + 1);
+    if (i + BATCH < imageless.length) {
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+    }
+  }
+
+  console.log(`[Demo Finder] Image resolution pass complete: recovered ${resolved}/${imageless.length} images`);
+  return resolved;
+}
+
 const DemoButton: FC<{ demoInfo: DemoInfo; gameName: string }> = ({ demoInfo, gameName }) => {
   const handleClick = () => {
     if (demoInfo.demo_appid) {
@@ -636,6 +703,9 @@ const FullPageWishlistWithDemos: FC = () => {
   const [scanProgress, setScanProgress] = useState("");
   const [sortBy, setSortBy] = useState<SortMode>(cachedSortBy);
   const [page, setPage] = useState(0);
+  // Incremented whenever capsuleImageCache is updated outside of React state
+  // so that image-less cards re-render after the async resolution pass.
+  const [, setCacheVersion] = useState(0);
   const bumperLabels = useControllerLabels();
 
   // Sync back to module-level cache
@@ -761,6 +831,44 @@ const FullPageWishlistWithDemos: FC = () => {
     } catch (e) {
       console.warn("[Demo Finder] Failed to persist demo cache:", e);
     }
+
+    // Fix 3: Targeted retry for games that have demoInfo but no header_image
+    const imagelessAfterScan = updatedWishlist.filter(
+      (item) => item.demoInfo && !item.demoInfo.header_image && !capsuleImageCache[String(item.appid)],
+    );
+    if (imagelessAfterScan.length > 0 && imagelessAfterScan.length <= 50) {
+      console.log(`[Demo Finder] Retrying ${imagelessAfterScan.length} image-less games after cooldown...`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      try {
+        const retryResults = await withTimeout(
+          checkDemosBatch(imagelessAfterScan.map((item) => item.appid)),
+          120_000,
+          "image retry pass",
+        );
+        let recovered = 0;
+        for (const [appidStr, demoResult] of Object.entries(retryResults)) {
+          if (demoResult.header_image) {
+            const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
+            if (idx !== -1) {
+              updatedWishlist[idx] = { ...updatedWishlist[idx], demoInfo: demoResult };
+            }
+            cachedDemoResults[appidStr] = demoResult;
+            recovered++;
+          }
+        }
+        if (recovered > 0) {
+          setWishlist([...updatedWishlist]);
+          console.log(`[Demo Finder] Image retry pass recovered ${recovered} image(s)`);
+        }
+      } catch (e) {
+        console.warn("[Demo Finder] Image retry pass failed:", e);
+      }
+    }
+
+    // Fix 1: Frontend fetchNoCors image resolution for any still-imageless games
+    resolveImagelessGames(updatedWishlist, setCacheVersion).catch((e) =>
+      console.warn("[Demo Finder] Frontend image resolution pass failed:", e),
+    );
   };
 
   const openGame = (appid: number, gameName: string) => {
@@ -863,15 +971,21 @@ const FullPageWishlistWithDemos: FC = () => {
                   const img = e.currentTarget as HTMLImageElement;
                   const cdnBase = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/`;
                   const sharedBase = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
+                  const cfBase = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appid}/`;
                   const fallbacks = [
                     `${cdnBase}header.jpg`,
                     `${sharedBase}header.jpg`,
+                    `${cfBase}header.jpg`,
                     `${cdnBase}capsule_616x353.jpg`,
                     `${sharedBase}capsule_616x353.jpg`,
                     `${cdnBase}library_600x900.jpg`,
                     `${sharedBase}library_600x900.jpg`,
                     `${cdnBase}hero_capsule.jpg`,
                     `${sharedBase}hero_capsule.jpg`,
+                    `${cdnBase}header_292x136.jpg`,
+                    `${sharedBase}header_292x136.jpg`,
+                    `${cdnBase}library_hero.jpg`,
+                    `${sharedBase}library_hero.jpg`,
                     `${cdnBase}capsule_231x87.jpg`,
                     `${sharedBase}capsule_231x87.jpg`,
                     `${cdnBase}capsule_sm_120.jpg`,
@@ -979,6 +1093,9 @@ function Content() {
   const [showSetup, setShowSetup] = useState(false);
   const [sortBy, setSortBy] = useState<SortMode>(cachedSortBy);
   const [optionsCollapsed, setOptionsCollapsed] = useState(false);
+  // Incremented whenever capsuleImageCache is updated outside of React state
+  // so that image-less cards re-render after the async resolution pass.
+  const [, setCacheVersion] = useState(0);
   const bumperLabels = useControllerLabels();
 
   const checkApiKey = useCallback(async () => {
@@ -1076,6 +1193,44 @@ function Content() {
     } catch (e) {
       console.warn("[Demo Finder] Failed to persist demo cache:", e);
     }
+
+    // Fix 3: Targeted retry for games that have demoInfo but no header_image
+    const imagelessAfterScan = updatedWishlist.filter(
+      (item) => item.demoInfo && !item.demoInfo.header_image && !capsuleImageCache[String(item.appid)],
+    );
+    if (imagelessAfterScan.length > 0 && imagelessAfterScan.length <= 50) {
+      console.log(`[Demo Finder] Retrying ${imagelessAfterScan.length} image-less games after cooldown...`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      try {
+        const retryResults = await withTimeout(
+          checkDemosBatch(imagelessAfterScan.map((item) => item.appid)),
+          120_000,
+          "image retry pass",
+        );
+        let recovered = 0;
+        for (const [appidStr, demoResult] of Object.entries(retryResults)) {
+          if (demoResult.header_image) {
+            const idx = updatedWishlist.findIndex((item) => String(item.appid) === appidStr);
+            if (idx !== -1) {
+              updatedWishlist[idx] = { ...updatedWishlist[idx], demoInfo: demoResult };
+            }
+            cachedDemoResults[appidStr] = demoResult;
+            recovered++;
+          }
+        }
+        if (recovered > 0) {
+          setWishlist([...updatedWishlist]);
+          console.log(`[Demo Finder] Image retry pass recovered ${recovered} image(s)`);
+        }
+      } catch (e) {
+        console.warn("[Demo Finder] Image retry pass failed:", e);
+      }
+    }
+
+    // Fix 1: Frontend fetchNoCors image resolution for any still-imageless games
+    resolveImagelessGames(updatedWishlist, setCacheVersion).catch((e) =>
+      console.warn("[Demo Finder] Frontend image resolution pass failed:", e),
+    );
   }, [wishlist]);
 
   // Keep the ref current
@@ -1580,6 +1735,35 @@ async function startupScan(): Promise<void> {
         title: "Demo Finder",
         body: `Background scan complete! Found ${demosFound} demo${demosFound !== 1 ? "s" : ""} in your wishlist.`,
       });
+    }
+
+    // Fix 3: Targeted retry for image-less games after cooldown
+    const imagelessAfterStartup = cachedWishlist.filter(
+      (item) => item.demoInfo && !item.demoInfo.header_image && !capsuleImageCache[String(item.appid)],
+    );
+    if (imagelessAfterStartup.length > 0 && imagelessAfterStartup.length <= 50) {
+      console.log(`[Demo Finder] Startup: retrying ${imagelessAfterStartup.length} image-less games after cooldown...`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      try {
+        const retryResults = await checkDemosBatch(imagelessAfterStartup.map((item) => item.appid));
+        let recovered = 0;
+        for (const [appidStr, demoResult] of Object.entries(retryResults)) {
+          if (demoResult.header_image) {
+            cachedDemoResults[appidStr] = demoResult;
+            recovered++;
+          }
+        }
+        if (recovered > 0) {
+          // Re-apply updated results to cachedWishlist
+          cachedWishlist = cachedWishlist.map((item) => {
+            const demoInfo = cachedDemoResults[String(item.appid)];
+            return demoInfo ? { ...item, demoInfo } : item;
+          });
+          console.log(`[Demo Finder] Startup: image retry pass recovered ${recovered} image(s)`);
+        }
+      } catch (e) {
+        console.warn("[Demo Finder] Startup: image retry pass failed:", e);
+      }
     }
   } catch (e) {
     console.error("[Demo Finder] Startup scan failed:", e);

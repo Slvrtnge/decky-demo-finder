@@ -717,6 +717,13 @@ class Plugin:
                     header_image = details.get("header_image")
                     if header_image:
                         result["header_image"] = header_image
+                    else:
+                        # Fallback: use first screenshot thumbnail if header_image is missing
+                        screenshots = details.get("screenshots", [])
+                        if screenshots:
+                            thumb = screenshots[0].get("path_thumbnail")
+                            if thumb:
+                                result["header_image"] = thumb
 
                     # Extract release date
                     rd = details.get("release_date", {})
@@ -838,6 +845,13 @@ class Plugin:
                                 header_image = details.get("header_image")
                                 if header_image:
                                     result["header_image"] = header_image
+                                else:
+                                    # Fallback: use first screenshot thumbnail if header_image is missing
+                                    screenshots = details.get("screenshots", [])
+                                    if screenshots:
+                                        thumb = screenshots[0].get("path_thumbnail")
+                                        if thumb:
+                                            result["header_image"] = thumb
 
                                 rd = details.get("release_date", {})
                                 if rd and rd.get("date"):
