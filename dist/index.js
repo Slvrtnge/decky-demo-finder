@@ -113,7 +113,6 @@ const getApiKey = callable("get_api_key");
 const resolveNamesBatch = callable("resolve_names_batch");
 const saveDemoCache = callable("save_demo_cache");
 const loadDemoCache = callable("load_demo_cache");
-const openUrlInBrowser = callable("open_url_in_browser");
 const BATCH_SIZE = 50;
 const ITEMS_PER_PAGE = 20;
 // Maximum pages to paginate through wishlistdata (100 items/page → 2 000 items max)
@@ -221,12 +220,6 @@ const fullPageCardImgStyle = {
     objectFit: "cover", display: "block",
     background: "rgba(0,0,0,0.3)",
 };
-/** Style variant for fallback-resolved images: uses contain instead of cover to avoid cropping. */
-const fallbackCardImgStyle = {
-    ...fullPageCardImgStyle,
-    objectFit: "contain",
-    background: "rgba(0,0,0,0.5)",
-};
 const fullPageCardBodyStyle = {
     padding: "4px 8px", flex: 1,
     display: "flex", flexDirection: "row", gap: "6px",
@@ -264,8 +257,6 @@ let cachedDemoCacheLoaded = false;
 let cachedSortBy = "alpha";
 /** Capsule / header image URLs harvested from Steam wishlistdata. */
 let capsuleImageCache = {};
-/** Track appids whose images were resolved via fallback (not from regular wishlistdata capsule). */
-const fallbackImageAppIds = new Set();
 // ---- Helpers ----
 function getSteamId() {
     try {
@@ -431,9 +422,9 @@ async function resolveNamesViaDemoBatch(items) {
 }
 /**
  * For games that ended up with no image after a scan (demoInfo.header_image is
- * null/empty and capsuleImageCache has no entry), construct the official Steam
- * wide capsule URL (capsule_616x353.jpg) directly. This image matches the card
- * aspect ratio and scales correctly with objectFit: "cover".
+ * null/empty and capsuleImageCache has no entry), use Decky's fetchNoCors
+ * (which proxies through the user's authenticated Steam session) to call
+ * appdetails and extract header_image or the first screenshot thumbnail.
  * Results are written into capsuleImageCache so the grid re-renders with images.
  *
  * @param items - The full wishlist after scanning.
@@ -443,16 +434,58 @@ async function resolveImagelessGames(items, setCacheVersion) {
     const imageless = items.filter((item) => !item.demoInfo?.header_image && !capsuleImageCache[String(item.appid)]);
     if (imageless.length === 0)
         return 0;
-    console.log(`[Demo Finder] Image resolution pass: ${imageless.length} games have no image, using wide capsule URLs`);
+    console.log(`[Demo Finder] Image resolution pass: ${imageless.length} games have no image, fetching via fetchNoCors`);
+    const BATCH = 4;
+    const DELAY_MS = 1500;
     let resolved = 0;
-    for (const item of imageless) {
-        const capsuleUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/capsule_616x353.jpg`;
-        capsuleImageCache[String(item.appid)] = capsuleUrl;
-        resolved++;
+    for (let i = 0; i < imageless.length; i += BATCH) {
+        const batch = imageless.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (item) => {
+            try {
+                const url = `https://store.steampowered.com/api/appdetails?appids=${item.appid}&cc=us&l=english`;
+                const resp = await fetchNoCors(url, { headers: { "Accept": "application/json" } });
+                if (!resp.ok)
+                    return;
+                const data = await resp.json();
+                const appEntry = data?.[String(item.appid)];
+                if (!appEntry?.success)
+                    return;
+                const details = appEntry.data ?? {};
+                const headerImage = details.header_image;
+                if (headerImage) {
+                    capsuleImageCache[String(item.appid)] = headerImage;
+                    resolved++;
+                    console.log(`[Demo Finder] Image resolution: resolved header_image for ${item.appid}`);
+                    return;
+                }
+                // Try first screenshot thumbnail from appdetails as a fallback
+                const screenshots = details.screenshots;
+                if (screenshots && screenshots.length > 0) {
+                    const thumb = screenshots[0].path_thumbnail || screenshots[0].path_full;
+                    if (thumb) {
+                        capsuleImageCache[String(item.appid)] = thumb;
+                        resolved++;
+                        console.log(`[Demo Finder] Image resolution: using screenshot thumbnail for ${item.appid}`);
+                        return;
+                    }
+                }
+                // Try constructing a direct header.jpg URL from the Fastly CDN (always 460×215)
+                const fastlyHeaderUrl = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/header.jpg`;
+                capsuleImageCache[String(item.appid)] = fastlyHeaderUrl;
+                resolved++;
+                console.log(`[Demo Finder] Image resolution: using Fastly header.jpg for ${item.appid}`);
+            }
+            catch (e) {
+                console.warn(`[Demo Finder] Image resolution: fetchNoCors failed for ${item.appid}:`, e);
+            }
+        }));
+        // Trigger re-render after each batch so images appear incrementally
+        setCacheVersion((v) => v + 1);
+        if (i + BATCH < imageless.length) {
+            await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+        }
     }
-    // Trigger re-render so images appear
-    setCacheVersion((v) => v + 1);
-    console.log(`[Demo Finder] Image resolution pass complete: set wide capsule URL for ${resolved}/${imageless.length} games`);
+    console.log(`[Demo Finder] Image resolution pass complete: recovered ${resolved}/${imageless.length} images`);
     return resolved;
 }
 const DemoButton = ({ demoInfo, gameName }) => {
@@ -537,31 +570,13 @@ const ApiKeySetup = ({ hasKey, onKeySaved }) => {
         catch (_e) { /* best-effort post-save callback */ }
         setSaving(false);
     };
-    const openKeyPage = async () => {
-        try {
-            const opened = await openUrlInBrowser(API_KEY_HELP_URL);
-            if (opened) {
-                toaster.toast({ title: "Demo Finder", body: "Opening API key page in system browser." });
-                return;
-            }
-        }
-        catch (_e) { /* fall through to client-side attempts */ }
-        const steamClient = window.SteamClient;
-        if (steamClient?.System?.OpenInSystemBrowser) {
-            steamClient.System.OpenInSystemBrowser(API_KEY_HELP_URL);
-            toaster.toast({ title: "Demo Finder", body: "Opening API key page in system browser." });
-        }
-        else {
-            DFL.Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
-            DFL.Navigation.CloseSideMenus();
-        }
-    };
-    const copyKeyUrl = () => {
-        navigator.clipboard.writeText(API_KEY_HELP_URL).then(() => toaster.toast({ title: "Demo Finder", body: "API key URL copied to clipboard!" }), () => toaster.toast({ title: "Demo Finder", body: "Failed to copy URL (clipboard access denied or unavailable). See URL in help text below." }));
+    const openKeyPage = () => {
+        DFL.Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+        DFL.Navigation.CloseSideMenus();
     };
     return (SP_JSX.jsxs(DFL.PanelSection, { title: "Steam API Key Setup", children: [SP_JSX.jsx("div", { style: helpTextStyle, children: hasKey
                     ? "✅ API key is configured. You can update it below if needed."
-                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: copyKeyUrl, children: SP_JSX.jsx("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: "Copy API Key URL" }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: wrapperRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyValue, onChange: (e) => setKeyValue(e.target.value), bIsPassword: !showKey }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowKey(!showKey), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [showKey ? SP_JSX.jsx(FaEyeSlash, { size: 12 }) : SP_JSX.jsx(FaEye, { size: 12 }), showKey ? "Hide Key" : "Show Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsxs("div", { style: helpTextStyle, children: [SP_JSX.jsxs("div", { children: ["Register at: ", API_KEY_HELP_URL] }), SP_JSX.jsx("div", { children: "Enter any domain name (e.g. \"localhost\")." }), SP_JSX.jsx("div", { children: "Your wishlist must also be set to Public." })] })] }));
+                    : "⚠️ A Steam Web API key is required to access your wishlist. It's free to register." }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: openKeyPage, children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [SP_JSX.jsx(FaKey, { size: 12 }), " Get Your Free API Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx("div", { ref: wrapperRef, children: SP_JSX.jsx(DFL.TextField, { label: "Steam Web API Key", value: keyValue, onChange: (e) => setKeyValue(e.target.value), bIsPassword: !showKey }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: () => setShowKey(!showKey), children: SP_JSX.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }, children: [showKey ? SP_JSX.jsx(FaEyeSlash, { size: 12 }) : SP_JSX.jsx(FaEye, { size: 12 }), showKey ? "Hide Key" : "Show Key"] }) }) }), SP_JSX.jsx(DFL.PanelSectionRow, { children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: handleSave, disabled: saving, children: saving ? "Saving..." : "Save API Key" }) }), SP_JSX.jsx("div", { style: helpTextStyle, children: "Go to steamcommunity.com/dev/apikey to register a key. Enter any domain name (e.g. \"localhost\"). Your wishlist must also be set to Public." })] }));
 };
 function detectControllerType(id) {
     const lower = id.toLowerCase();
@@ -803,28 +818,19 @@ const FullPageWishlistWithDemos = () => {
             toaster.toast({ title: "Demo Finder", body: `Opening demo for ${gameName}` });
         }
     };
-    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsxs(DFL.Focusable, { style: fullPageButtonGroupStyle, "flow-children": "horizontal", children: [SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.6)", fontSize: "12px", alignSelf: "center", whiteSpace: "nowrap" }, children: ["Current Sort Method: ", sortLabel[sortBy]] }), SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[nextSortMode(sortBy)]] }) }), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) })] }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs(DFL.Focusable, { style: fullPageGridStyle, "flow-children": "grid", children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fallbackImageAppIds.has(String(item.appid)) ? fallbackCardImgStyle : fullPageCardImgStyle, onLoad: (e) => {
-                                    // Covers the onError CDN fallback path: when the initial src failed and a
-                                    // fallback URL was set (data-fallback="true"), apply containment on load.
-                                    const img = e.currentTarget;
-                                    if (img.dataset.fallback === "true") {
-                                        img.style.objectFit = "contain";
-                                        img.style.background = "rgba(0,0,0,0.5)";
-                                    }
-                                }, onError: (e) => {
+    return (SP_JSX.jsxs("div", { style: fullPageStyle, children: [SP_JSX.jsx("style", { children: focusHighlightCSS }), SP_JSX.jsxs("div", { style: fullPageHeaderStyle, children: [SP_JSX.jsxs("div", { style: fullPageTitleStyle, children: [SP_JSX.jsx(FaGamepad, { size: 22 }), " Demo Finder", wishlist.length > 0 && (SP_JSX.jsxs("span", { style: { fontSize: "14px", fontWeight: "normal", color: "rgba(255,255,255,0.5)" }, children: ["\u2014 ", wishlist.length, " games", hasScanned && `, ${demosFoundCount} with demos`] }))] }), wishlist.length > 0 && (SP_JSX.jsxs(DFL.Focusable, { style: fullPageButtonGroupStyle, "flow-children": "horizontal", children: [SP_JSX.jsxs("span", { style: { color: "rgba(255,255,255,0.6)", fontSize: "12px", alignSelf: "center", whiteSpace: "nowrap" }, children: ["Current Sort Method: ", sortLabel[sortBy]] }), SP_JSX.jsx(DFL.Focusable, { onActivate: cycleSortMode, children: SP_JSX.jsxs("div", { style: fullPageBtnStyle, onClick: cycleSortMode, children: [SP_JSX.jsx(FaSortAlphaDown, { size: 12, style: { marginRight: "6px" } }), sortLabel[nextSortMode(sortBy)]] }) }), hasScanned && demosFoundCount > 0 && (SP_JSX.jsx(DFL.Focusable, { onActivate: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: SP_JSX.jsx("div", { style: filterDemoOnly ? fullPageActiveBtnStyle : fullPageBtnStyle, onClick: () => { setFilterDemoOnly(!filterDemoOnly); setPage(0); }, children: filterDemoOnly ? `🎮 Demos Only (${demosFoundCount})` : `All Games (${wishlist.length})` }) })), SP_JSX.jsx(DFL.Focusable, { onActivate: scanning ? undefined : scanForDemos, children: SP_JSX.jsxs("div", { style: { ...fullPageBtnStyle, opacity: scanning ? 0.6 : 1 }, onClick: scanning ? undefined : scanForDemos, children: [SP_JSX.jsx(FaSearch, { size: 12, style: { marginRight: "6px" } }), scanning ? scanProgress || "Scanning..." : hasScanned ? "Re-scan" : `Scan ${wishlist.length} Games`] }) })] }))] }), wishlist.length === 0 ? (SP_JSX.jsxs("div", { style: fullPageStatusStyle, children: [SP_JSX.jsx("div", { style: { fontSize: "18px", marginBottom: "8px" }, children: "\uD83C\uDFAE" }), SP_JSX.jsx("div", { children: "No wishlist loaded." }), SP_JSX.jsx("div", { style: { fontSize: "12px", marginTop: "8px", color: "rgba(255,255,255,0.4)" }, children: "Open the Demo Finder in the Quick Access menu (\u2630) to load your wishlist." })] })) : (SP_JSX.jsxs(DFL.Focusable, { style: fullPageGridStyle, "flow-children": "grid", children: [scanning && (SP_JSX.jsx("div", { style: fullPageStatusStyle, children: scanProgress || "Scanning for demos..." })), !scanning && pagedItems.map((item) => (SP_JSX.jsxs(DFL.Focusable, { style: fullPageCardStyle, focusWithinClassName: "demo-finder-card-focus", onActivate: () => openGame(item.appid, item.name), children: [SP_JSX.jsx("img", { src: item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`, alt: item.name, style: fullPageCardImgStyle, onError: (e) => {
                                     const img = e.currentTarget;
                                     const cdnBase = `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/`;
                                     const sharedBase = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
                                     const cfBase = `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.appid}/`;
                                     const fastlyBase = `https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/${item.appid}/`;
                                     const fallbacks = [
-                                        `${fastlyBase}capsule_616x353.jpg`,
-                                        `${cdnBase}capsule_616x353.jpg`,
-                                        `${sharedBase}capsule_616x353.jpg`,
                                         `${fastlyBase}header.jpg`,
                                         `${cdnBase}header.jpg`,
                                         `${sharedBase}header.jpg`,
                                         `${cfBase}header.jpg`,
+                                        `${cdnBase}capsule_616x353.jpg`,
+                                        `${sharedBase}capsule_616x353.jpg`,
                                         `${cdnBase}library_600x900.jpg`,
                                         `${sharedBase}library_600x900.jpg`,
                                         `${cdnBase}hero_capsule.jpg`,
@@ -845,7 +851,6 @@ const FullPageWishlistWithDemos = () => {
                                         next++;
                                     if (next < fallbacks.length) {
                                         img.dataset.fbIdx = String(next);
-                                        img.dataset.fallback = "true";
                                         img.src = fallbacks[next];
                                     }
                                     else {

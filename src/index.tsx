@@ -25,7 +25,6 @@ const getApiKey = callable<[], string>("get_api_key");
 const resolveNamesBatch = callable<[appids: number[]], Record<string, string>>("resolve_names_batch");
 const saveDemoCache = callable<[cache_data: Record<string, DemoInfo>], boolean>("save_demo_cache");
 const loadDemoCache = callable<[], Record<string, DemoInfo>>("load_demo_cache");
-const openUrlInBrowser = callable<[url: string], boolean>("open_url_in_browser");
 
 
 // ---- Types ----
@@ -536,30 +535,9 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
     setSaving(false);
   };
 
-  const openKeyPage = async () => {
-    try {
-      const opened = await openUrlInBrowser(API_KEY_HELP_URL);
-      if (opened) {
-        toaster.toast({ title: "Demo Finder", body: "Opening API key page in system browser." });
-        return;
-      }
-    } catch (_e) { /* fall through to client-side attempts */ }
-
-    const steamClient = (window as any).SteamClient;
-    if (steamClient?.System?.OpenInSystemBrowser) {
-      steamClient.System.OpenInSystemBrowser(API_KEY_HELP_URL);
-      toaster.toast({ title: "Demo Finder", body: "Opening API key page in system browser." });
-    } else {
-      Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
-      Navigation.CloseSideMenus();
-    }
-  };
-
-  const copyKeyUrl = () => {
-    navigator.clipboard.writeText(API_KEY_HELP_URL).then(
-      () => toaster.toast({ title: "Demo Finder", body: "API key URL copied to clipboard!" }),
-      () => toaster.toast({ title: "Demo Finder", body: "Failed to copy URL (clipboard access denied or unavailable). See URL in help text below." }),
-    );
+  const openKeyPage = () => {
+    Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+    Navigation.CloseSideMenus();
   };
 
   return (
@@ -573,13 +551,6 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         <ButtonItem layout="below" onClick={openKeyPage}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
             <FaKey size={12} /> Get Your Free API Key
-          </div>
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem layout="below" onClick={copyKeyUrl}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-            Copy API Key URL
           </div>
         </ButtonItem>
       </PanelSectionRow>
@@ -607,9 +578,9 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         </ButtonItem>
       </PanelSectionRow>
       <div style={helpTextStyle}>
-        <div>Register at: {API_KEY_HELP_URL}</div>
-        <div>Enter any domain name (e.g. "localhost").</div>
-        <div>Your wishlist must also be set to Public.</div>
+        Go to steamcommunity.com/dev/apikey to register a key.
+        Enter any domain name (e.g. "localhost").
+        Your wishlist must also be set to Public.
       </div>
     </PanelSection>
   );

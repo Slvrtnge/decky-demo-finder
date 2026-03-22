@@ -317,21 +317,6 @@ class Plugin:
         """Load the user's Steam Web API key from plugin settings."""
         return self.settings.getSetting("steam_api_key", "")
 
-    async def open_url_in_browser(self, url: str) -> bool:
-        """Open a URL in the system's default web browser."""
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "xdg-open", url,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(process.wait(), timeout=5)
-            decky.logger.info(f"Opened URL in system browser: {url}")
-            return True
-        except Exception as e:
-            decky.logger.error(f"open_url_in_browser failed: {e}")
-            return False
-
     # ---- Wishlist fetching strategies ----
 
     async def _fetch_wishlist_with_key(self, session, steam_id: str, api_key: str):
