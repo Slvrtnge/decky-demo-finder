@@ -677,12 +677,14 @@ const FullPageWishlistWithDemos: FC = () => {
 
   useBumperNavigation(setPage, totalPages);
 
+  const nextSortMode = (mode: SortMode): SortMode => {
+    if (mode === "alpha") return "date_added";
+    if (mode === "date_added") return "release_date";
+    return "alpha";
+  };
+
   const cycleSortMode = () => {
-    setSortBy((prev) => {
-      if (prev === "alpha") return "date_added";
-      if (prev === "date_added") return "release_date";
-      return "alpha";
-    });
+    setSortBy((prev) => nextSortMode(prev));
     setPage(0);
   };
 
@@ -793,10 +795,13 @@ const FullPageWishlistWithDemos: FC = () => {
         {/* Sort button */}
         {wishlist.length > 0 && (
           <Focusable style={fullPageButtonGroupStyle} flow-children="horizontal">
+            <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "12px", alignSelf: "center", whiteSpace: "nowrap" }}>
+              Current Sort Method: {sortLabel[sortBy]}
+            </span>
             <Focusable onActivate={cycleSortMode}>
               <div style={fullPageBtnStyle} onClick={cycleSortMode}>
                 <FaSortAlphaDown size={12} style={{ marginRight: "6px" }} />
-                {sortLabel[sortBy]}
+                {sortLabel[nextSortMode(sortBy)]}
               </div>
             </Focusable>
 
@@ -1258,12 +1263,14 @@ function Content() {
     loadWishlist();
   };
 
+  const nextSortMode = (mode: SortMode): SortMode => {
+    if (mode === "alpha") return "date_added";
+    if (mode === "date_added") return "release_date";
+    return "alpha";
+  };
+
   const cycleSortMode = () => {
-    setSortBy((prev) => {
-      if (prev === "alpha") return "date_added";
-      if (prev === "date_added") return "release_date";
-      return "alpha";
-    });
+    setSortBy((prev) => nextSortMode(prev));
     setPage(0);
   };
 
@@ -1366,7 +1373,7 @@ function Content() {
                 <ButtonItem layout="below" onClick={cycleSortMode}>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
                     <FaSortAlphaDown size={14} />
-                    Sort: {sortLabel[sortBy]}
+                    Sort: {sortLabel[nextSortMode(sortBy)]}
                   </div>
                 </ButtonItem>
               </PanelSectionRow>
@@ -1400,6 +1407,14 @@ function Content() {
       )}
       {resolvingNames && !loading && (
         <PanelSection><div style={statusStyle}>Resolving game names...</div></PanelSection>
+      )}
+
+      {!loading && wishlist.length > 0 && (
+        <PanelSection>
+          <div style={{ color: "rgba(255,255,255,0.6)", fontSize: "12px", textAlign: "center", padding: "4px 0" }}>
+            Current Sort Method: {sortLabel[sortBy]}
+          </div>
+        </PanelSection>
       )}
 
       {!loading && wishlist.length > 0 && (
