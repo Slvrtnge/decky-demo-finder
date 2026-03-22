@@ -536,8 +536,21 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
   };
 
   const openKeyPage = () => {
-    Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
-    Navigation.CloseSideMenus();
+    const steamClient = (window as any).SteamClient;
+    if (steamClient?.System?.OpenInSystemBrowser) {
+      steamClient.System.OpenInSystemBrowser(API_KEY_HELP_URL);
+      toaster.toast({ title: "Demo Finder", body: "Opening API key page in system browser." });
+    } else {
+      Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+      Navigation.CloseSideMenus();
+    }
+  };
+
+  const copyKeyUrl = () => {
+    navigator.clipboard.writeText(API_KEY_HELP_URL).then(
+      () => toaster.toast({ title: "Demo Finder", body: "API key URL copied to clipboard!" }),
+      () => toaster.toast({ title: "Demo Finder", body: "Failed to copy URL (clipboard access denied or unavailable). See URL in help text below." }),
+    );
   };
 
   return (
@@ -551,6 +564,13 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         <ButtonItem layout="below" onClick={openKeyPage}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
             <FaKey size={12} /> Get Your Free API Key
+          </div>
+        </ButtonItem>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={copyKeyUrl}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+            Copy API Key URL
           </div>
         </ButtonItem>
       </PanelSectionRow>
@@ -578,9 +598,9 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
         </ButtonItem>
       </PanelSectionRow>
       <div style={helpTextStyle}>
-        Go to steamcommunity.com/dev/apikey to register a key.
-        Enter any domain name (e.g. "localhost").
-        Your wishlist must also be set to Public.
+        <div>Register at: {API_KEY_HELP_URL}</div>
+        <div>Enter any domain name (e.g. "localhost").</div>
+        <div>Your wishlist must also be set to Public.</div>
       </div>
     </PanelSection>
   );
