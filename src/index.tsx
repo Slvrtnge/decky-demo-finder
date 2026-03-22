@@ -22,6 +22,7 @@ const getWishlist = callable<[steam_id: string], WishlistItem[] | string>("get_w
 const checkDemosBatch = callable<[appids: number[]], Record<string, DemoInfo>>("check_demos_batch");
 const setApiKey = callable<[api_key: string], boolean>("set_api_key");
 const getApiKey = callable<[], string>("get_api_key");
+const openUrlInBrowser = callable<[url: string], boolean>("open_url_in_browser");
 const resolveNamesBatch = callable<[appids: number[]], Record<string, string>>("resolve_names_batch");
 const saveDemoCache = callable<[cache_data: Record<string, DemoInfo>], boolean>("save_demo_cache");
 const loadDemoCache = callable<[], Record<string, DemoInfo>>("load_demo_cache");
@@ -535,8 +536,12 @@ const ApiKeySetup: FC<{ hasKey: boolean; onKeySaved: () => void }> = ({ hasKey, 
     setSaving(false);
   };
 
-  const openKeyPage = () => {
-    Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+  const openKeyPage = async () => {
+    try {
+      await openUrlInBrowser(API_KEY_HELP_URL);
+    } catch (_e) {
+      Navigation.NavigateToExternalWeb(API_KEY_HELP_URL);
+    }
     Navigation.CloseSideMenus();
   };
 
