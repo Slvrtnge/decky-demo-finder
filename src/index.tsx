@@ -179,12 +179,7 @@ const fullPageCardImgStyle: React.CSSProperties = {
   background: "rgba(0,0,0,0.3)",
 };
 
-/** Style variant for fallback-resolved images: uses contain instead of cover to avoid cropping. */
-const fallbackCardImgStyle: React.CSSProperties = {
-  ...fullPageCardImgStyle,
-  objectFit: "contain",
-  background: "rgba(0,0,0,0.5)",
-};
+
 
 const fullPageCardBodyStyle: React.CSSProperties = {
   padding: "4px 8px", flex: 1,
@@ -230,8 +225,6 @@ let cachedDemoCacheLoaded = false;
 let cachedSortBy: SortMode = "alpha";
 /** Capsule / header image URLs harvested from Steam wishlistdata. */
 let capsuleImageCache: Record<string, string> = {};
-/** Track appids whose images were resolved via fallback (not from regular wishlistdata capsule). */
-const fallbackImageAppIds = new Set<string>();
 
 
 // ---- Helpers ----
@@ -963,15 +956,19 @@ const FullPageWishlistWithDemos: FC = () => {
               <img
                 src={item.demoInfo?.header_image || capsuleImageCache[String(item.appid)] || `https://cdn.akamai.steamstatic.com/steam/apps/${item.appid}/header.jpg`}
                 alt={item.name}
-                style={fallbackImageAppIds.has(String(item.appid)) ? fallbackCardImgStyle : fullPageCardImgStyle}
+                style={fullPageCardImgStyle}
                 onLoad={(e) => {
-                  // Covers the onError CDN fallback path: when the initial src failed and a
-                  // fallback URL was set (data-fallback="true"), apply containment on load.
                   const img = e.currentTarget as HTMLImageElement;
-                  if (img.dataset.fallback === "true") {
-                    img.style.objectFit = "contain";
-                    img.style.background = "rgba(0,0,0,0.5)";
-                  }
+                  // Always restore visibility (may have been hidden by a previous exhausted onError chain)
+                  img.style.display = "block";
+                  img.style.objectFit = "cover";
+                  img.style.background = "rgba(0,0,0,0.3)";
+                  // Hide placeholder if it was shown
+                  const placeholder = img.parentElement?.querySelector(".img-placeholder") as HTMLElement | null;
+                  if (placeholder) placeholder.style.display = "none";
+                  // Reset fallback chain state so a future onError starts fresh
+                  delete img.dataset.fbIdx;
+                  delete img.dataset.fallback;
                 }}
                 onError={(e) => {
                   const img = e.currentTarget as HTMLImageElement;
